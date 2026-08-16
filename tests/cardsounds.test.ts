@@ -305,3 +305,64 @@ describe('cards that wait for the aim', () => {
     expect(CLIPS['winchester']!.gain).toBe(CLIPS['six-gun']!.gain);
   });
 });
+
+describe('Doom', () => {
+  it('booms when Doom climbs', async () => {
+    const s = await sounds();
+    s.hear([{ t: 'DOOM', delta: 1, total: 4 }], 'p0', 0.7, 5);
+    expect(played).toHaveLength(1);
+    expect(played[0]!.src).toContain('doom-boom');
+  });
+
+  it('booms once for a whole Dusk, not once per source', async () => {
+    // Four unresolved Threats at Dusk is four DOOM events, and a Whisper fill
+    // adds a fifth. Five booms in a row is a machine gun, not dread.
+    const s = await sounds();
+    s.hear([
+      { t: 'PHASE', phase: 'dusk', round: 5 },
+      { t: 'DOOM', delta: 1, total: 4 },
+      { t: 'DOOM', delta: 1, total: 5 },
+      { t: 'DOOM', delta: 1, total: 6 },
+      { t: 'WHISPER_FILL', fill: 1, doom: 2, total: 0 },
+      { t: 'DOOM', delta: 2, total: 8 },
+    ], 'p0', 0.7, 5);
+    expect(played.filter((p) => p.src.includes('doom-boom'))).toHaveLength(1);
+  });
+
+  it('stays silent when Doom does not move', async () => {
+    const s = await sounds();
+    s.hear([{ t: 'PHASE', phase: 'dusk', round: 5 }], 'p0', 0.7, 5);
+    expect(played.filter((p) => p.src.includes('doom-boom'))).toHaveLength(0);
+  });
+
+  it('is the same for everyone, because Doom is nobody’s', async () => {
+    // No near/far. There is no "somebody else's Doom" to mix quieter.
+    const s = await sounds();
+    s.hear([{ t: 'DOOM', delta: 1, total: 4 }], 'p0', 0.7, 5);
+    const mine = played.at(-1)!.volume;
+    s.hear([{ t: 'DOOM', delta: 1, total: 5 }], 'p3', 0.7, 5);
+    expect(played.at(-1)!.volume).toBe(mine);
+  });
+
+  it('reaches the speaker from a real game', async () => {
+    // The chain is engine -> server -> net -> hook, and a break anywhere in it
+    // is silent by definition.
+    const room = new GameRoom({
+      seed: 'doom-real',
+      seats: [{ name: 'Ada', kind: 'bot' }, { name: 'Bell', kind: 'bot' },
+        { name: 'Cole', kind: 'bot' }],
+      marked: 0,
+    });
+    const s = await sounds();
+    for (let i = 0; i < 2000 && room.awaitingBot; i++) {
+      for (const u of room.stepBot() ?? []) {
+        if (u.seat !== 'p0') continue;
+        if (!u.events.some((e) => e.t === 'DOOM')) continue;
+        s.hear(u.events, 'p0', 0.7, 5);
+        expect(played.some((p) => p.src.includes('doom-boom'))).toBe(true);
+        return;
+      }
+    }
+    throw new Error('no Doom in a whole game');
+  });
+});

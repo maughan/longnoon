@@ -653,6 +653,30 @@ label {
   outline-offset: 2px;
 }
 
+/* Game speed, in the settings sheet. Host only — see server/protocol.ts. */
+.speedpick {
+  display: grid;
+  gap: 0.3rem;
+}
+.speedpick .name {
+  font-variant-caps: small-caps;
+  letter-spacing: 0.12em;
+  font-size: 0.82rem;
+}
+.speedpick .row {
+  display: flex;
+  gap: 0.35rem;
+}
+.speedpick button {
+  font-size: 0.74rem;
+  padding: 0.2rem 0.6rem;
+  font-variant-caps: small-caps;
+  letter-spacing: 0.08em;
+}
+.speedpick .hint {
+  margin: 0;
+}
+
 /* --- the right rail --------------------------------------------------- */
 
 .side {
@@ -1434,30 +1458,6 @@ label {
   margin-left: 0.4rem;
 }
 
-/* Hearing one effect on demand — the answer to "is it the volume or the
- * wiring". Lives beside the effects slider because that is where someone
- * already is when they ask. */
-.hearit {
-  display: grid;
-  gap: 0.3rem;
-}
-.hearit .name {
-  font-variant-caps: small-caps;
-  letter-spacing: 0.12em;
-  font-size: 0.82rem;
-}
-.hearit .row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-}
-.hearit button {
-  font-size: 0.74rem;
-  padding: 0.2rem 0.5rem;
-}
-.hearit .hint {
-  margin: 0;
-}
 
 /* --- looking at a card closely ------------------------------------------ */
 

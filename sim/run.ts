@@ -51,6 +51,10 @@ export interface GameResult {
   doom: number;
   /** How many times the Whisper track filled in Act II. Doom's other source. */
   whisperFills: number;
+  /** Vessel cards played, by id — is any of the ten dead weight or dominant? */
+  vesselPlays: Record<string, number>;
+  /** Fevered Signs the Vessel carried into Act II. */
+  vesselSigns: number | null;
   vesselDamage: number;
   vesselPolicy: string | null;
   signsBought: number;
@@ -90,6 +94,8 @@ export function runGame(cfg: RunConfig): GameResult {
     provisionDryRound: null,
     doom: 0,
     whisperFills: 0,
+    vesselPlays: {},
+    vesselSigns: null,
     vesselDamage: 0,
     vesselPolicy: null,
     signsBought: 0,
@@ -182,10 +188,18 @@ function record(
     r.signsAtTurningMax = Math.max(...held);
     const scars = s.turnOrder.map((id) => s.players[id].scars);
     r.scarsAtTurning = scars.reduce((a, b) => a + b, 0) / scars.length;
+    if (s.vessel) {
+      const v = s.players[s.vessel];
+      r.vesselSigns = [...v.deck, ...v.hand, ...v.discard]
+        .filter((ci) => card(ci.cardId).type === 'sign').length;
+    }
   }
 
   for (const ev of events) {
     if (ev.t === 'FELL' && r.firstFallRound === null) r.firstFallRound = s.round;
+    if (ev.t === 'PLAYED' && card(ev.cardId).type === 'vessel') {
+      r.vesselPlays[ev.cardId] = (r.vesselPlays[ev.cardId] ?? 0) + 1;
+    }
     if (ev.t === 'BOUGHT' && card(ev.cardId).type === 'sign') {
       const seat = Number(ev.player.slice(1));
       signsBySeat[seat] = (signsBySeat[seat] ?? 0) + 1;

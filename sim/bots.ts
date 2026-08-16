@@ -116,6 +116,7 @@ function isUtility(ci: CardInstance): boolean {
   );
 }
 
+
 /**
  * Cards nobody should play: deck-thinning is a trap when the deck is your
  * health (DESIGN.md §5 — thin means fragile). Applied uniformly to every policy
@@ -432,10 +433,29 @@ export function makeBot(policy: BuyPolicy): Bot {
     if (view.actionsLeft <= 0) return endTurn(legal);
 
     /*
-      The Vessel falls through here too, and holds nothing but its own deck —
-      so `playsSign` never gates it (its cards are type `vessel`) and
-      `selfHarming` is the only filter that applies. Every Vessel card is
-      worth playing when drawn; that is what rationing by the draw means.
+      The Vessel: play whatever is in hand.
+
+      It needs its own branch, and the reason is worth keeping. Everything
+      below is posse reasoning — finish a Threat, aim at the Vessel, buy — and
+      a Vessel card matches none of those, so the seat fell straight through to
+      END_TURN and played ZERO cards in 250 games. The measurement said the
+      posse won 52.8%, which is what an opponent that does nothing looks like.
+      Sixth time a new mechanic has "done nothing" because of the bots.
+
+      No ranking. Every card in that deck is worth playing when drawn, which is
+      exactly what rationing by the draw is supposed to mean — and a heuristic
+      here would be the bespoke action menu growing back inside the bot.
+    */
+    if (you.status === 'vessel') {
+      const mine = you.hand.find((ci) =>
+        legal.some((c) => c.t === 'PLAY_CARD' && c.uid === ci.uid));
+      const cmd = mine && legal.find((c) => c.t === 'PLAY_CARD' && c.uid === mine.uid);
+      return cmd ?? endTurn(legal);
+    }
+
+    /*
+      Everyone else. `playsSign` gates Signs by policy; `selfHarming` keeps a
+      card that only hurts you out of the list.
     */
     const playable = you.hand.filter(
       (ci) =>
@@ -476,6 +496,23 @@ export function makeBot(policy: BuyPolicy): Bot {
     // C. Buy — the only step that differs between policies. Buying is also
     //    healing (DESIGN.md §5), so it stays a high priority.
     if (you.status === 'posse') {
+      /*
+        What you would cash in rather than play.
+
+        The `opsFor().length === 0` clause is doing more work than it looks:
+        it is "this card has no effect worth keeping". Giving a blank card ANY
+        effect used to drop it out of this list entirely, and since nothing
+        played it either, the card became unspendable and unplayable at once —
+        purchases fell by two thirds and every arm of the Saddlebag experiment
+        measured identically, because the bot had stopped touching the card in
+        both directions.
+
+        There is no such card in the set today — the experiment that produced
+        this note concluded against adopting one — but the shape of the trap is
+        worth keeping: if a card ever gains an effect that can always WAIT, it
+        needs a clause here as well as somewhere that plays it, or it silently
+        becomes untouchable in both directions.
+      */
       const spendable = you.hand.filter(
         (ci) =>
           card(ci.cardId).grit > 0 &&

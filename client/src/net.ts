@@ -9,7 +9,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import PartySocket from 'partysocket';
 import type { Command, GameEvent, PlayerId } from '../../engine/state';
 import type { ClientState } from '../../engine/view';
-import type { Inbound, Outbound, TableSeat } from '../../server/protocol';
+import type { Inbound, Outbound, Speed, TableSeat } from '../../server/protocol';
 import { describe, narrate, type Beat } from './beats';
 
 const TOKEN_KEY = 'long-noon.session';
@@ -48,6 +48,9 @@ export interface Net {
   dev: boolean;
   /** Seats nobody is driving. Public — the table watched them being filled. */
   bots: PlayerId[];
+  /** Bot pacing, and whether this seat owns it. */
+  speed: Speed;
+  isHost: boolean;
   send(msg: Inbound): void;
   /** Open a room with this many chairs. Who fills them is decided at the table. */
   create(seats: number): void;
@@ -125,6 +128,14 @@ export function useNet(target: NetTarget): Net {
   const [error, setError] = useState<string | null>(null);
   const [dev, setDev] = useState(false);
   const [bots, setBots] = useState<PlayerId[]>([]);
+  /**
+   * Bot pacing, and whether this seat may change it.
+   *
+   * Server state, not a local preference: the pauses happen there, so a client
+   * could only ever delay what it already has — never speed it up.
+   */
+  const [speed, setSpeed] = useState<Speed>('normal');
+  const [isHost, setIsHost] = useState(false);
 
   // The socket handler is installed once, so anything it reads must be a ref.
   const seatRef = useRef<PlayerId | null>(null);
@@ -170,6 +181,8 @@ export function useNet(target: NetTarget): Net {
           setSeat(msg.seat);
           seatRef.current = msg.seat;
           setDev(msg.dev);
+          setSpeed(msg.speed);
+          setIsHost(msg.host);
           setError(null);
           localStorage.setItem(
             TOKEN_KEY,
@@ -179,6 +192,14 @@ export function useNet(target: NetTarget): Net {
         case 'table':
           setRoomId(msg.roomId);
           setTable({ seats: msg.seats, canBegin: msg.canBegin });
+          setSpeed(msg.speed);
+          setIsHost(msg.host !== null && msg.host === seatRef.current);
+          break;
+        // Its own message so a mid-game change does not arrive as a `table`,
+        // which would send everyone back to the waiting room.
+        case 'speed':
+          setSpeed(msg.speed);
+          setIsHost(msg.you);
           break;
         case 'state': {
           // The deal has happened; the waiting room is over.
@@ -241,7 +262,8 @@ export function useNet(target: NetTarget): Net {
   }, [target.host, target.room]);
 
   return {
-    connected, roomId, seat, view, legal, log, beats, feed, rev, error, dev, bots, send,
+    connected, roomId, seat, view, legal, log, beats, feed, rev, error, dev, bots,
+    speed, isHost, send,
     table: tableState,
     setSeat: (index, kind) => send({ t: 'seat', index, kind }),
     begin: (marked) => send({ t: 'begin', marked }),

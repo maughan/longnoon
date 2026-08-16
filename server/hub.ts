@@ -15,7 +15,7 @@ import { randAt } from '../engine/rng';
 import type { Command, GameEvent, PlayerId } from '../engine/state';
 import { Lobby, type LobbyConfig } from './lobby';
 import type { Update } from './room';
-import type { Envelope, Inbound, Outbound, TableSeat } from './protocol';
+import type { Envelope, Inbound, Outbound, Speed, TableSeat } from './protocol';
 import { beatsIn, hasDusk, hasTurning } from './pace';
 
 interface Session {
@@ -42,7 +42,47 @@ interface Room {
   tokens: Map<string, PlayerId>;
   /** seat -> the connection currently driving it, if any. */
   conns: Map<PlayerId, string>;
+  /**
+   * Who owns the pacing control. The first human to take a chair.
+   *
+   * Not whoever sent `create` — `create` opens chairs and seats nobody, so
+   * that would hand the room to someone who might never sit down.
+   *
+   * Handed on when they go, silently and with no vote: a room whose host has
+   * left is a room nobody can change the speed of, which is the failure mode
+   * of every host-with-exclusive-rights design.
+   */
+  host: PlayerId | null;
+  speed: Speed;
+  /**
+   * Nothing may be committed until this moment. Dusk and the Turning.
+   *
+   * Both are full-screen animations the whole table watches, and a move landing
+   * behind one is a move nobody saw. Bots were already held off by
+   * `nextBotAt`; this closes the other half, which is a human clicking through
+   * the sheet.
+   */
+  lockedUntil: number;
 }
+
+/**
+ * What each speed does to the pauses.
+ *
+ * One multiplier across all four knobs rather than a separate table per speed,
+ * so the SHAPE of the pacing is preserved — a Dusk still costs more than a
+ * quiet action, the per-sentence read is still per-sentence. Only the tempo
+ * moves.
+ *
+ * `minGapMs` scales with the rest, and has to: it is the floor, and it is
+ * what actually dominates bot time. CLAUDE.md measures 18.8 minutes of pure
+ * bot pacing at three players, of which the floor is most. Leaving it fixed
+ * would make "fastest" indistinguishable from "fast".
+ */
+const SPEED: Record<Speed, number> = {
+  normal: 1,
+  fast: 0.45,
+  fastest: 0.15,
+};
 
 export interface HubOptions {
   config?: Partial<LobbyConfig>;
@@ -100,9 +140,24 @@ export interface HubOptions {
    * cheapest fix for "I cannot see what they did" is time.
    *
    * The model underneath is untouched and still adds time for a busy action, a
-   * Dusk or the Turning — this only raises the bottom. It is the obvious knob
-   * for a game-speed control later: drop it and the measured pacing takes over
-   * again.
+   * Dusk or the Turning — this only raises the bottom.
+   *
+   * It IS the game-speed control: `SPEED` scales it along with everything
+   * else, and because it is the floor it is what most bot actions actually
+   * cost, so it dominates the felt tempo.
+   *
+   * 1500ms at `normal`, down from 5000. The slowest a bot should ever act.
+   *
+   * At this value the floor barely binds any more: `botDelayMs` is also 1500,
+   * so an ordinary one-sentence action costs the same either way and the
+   * per-sentence model underneath is what you actually feel. That is the
+   * intended end state — the floor was a blunt instrument added when the
+   * pacing model alone read too fast, and it is now a backstop rather than
+   * the tempo.
+   *
+   * Worth ~12 minutes of table time at three players against DESIGN.md's
+   * 40-minute target, which is the largest lever on session length that
+   * touches no rule.
    */
   minGapMs?: number;
 }
@@ -156,7 +211,7 @@ export class Hub {
     this.duskMs = opts.duskMs ?? 2400;
     this.turningMs = opts.turningMs ?? 6600;
     this.devTools = opts.devTools ?? false;
-    this.minGapMs = opts.minGapMs ?? 5000;
+    this.minGapMs = opts.minGapMs ?? 1500;
   }
 
   room(id: string): Room | undefined {
@@ -181,12 +236,13 @@ export class Hub {
       case 'create': return this.create(conn, msg, now);
       case 'join': return this.join(conn, msg.roomId, msg.name, now);
       case 'rejoin': return this.rejoin(conn, msg.roomId, msg.token, now);
-      case 'command': return this.command(conn, msg.command);
+      case 'command': return this.command(conn, msg.command, now);
       case 'vote': return this.vote(conn, msg.seat, msg.choice, now);
       case 'dev': return this.dev(conn, msg.action);
       case 'leave': return this.leave(conn, now);
       case 'seat': return this.setSeat(conn, msg.index, msg.kind);
       case 'begin': return this.begin(conn, msg.marked, now);
+      case 'speed': return this.setSpeed(conn, msg.value);
       default: return [err(conn, 'Unknown message')];
     }
   }
@@ -204,6 +260,9 @@ export class Hub {
       seed: msg.seed ?? this.newId(),
       // Every chair starts empty. Who or what fills them is decided at the
       // table, by the people who turn up.
+      host: null,
+      speed: 'normal',
+      lockedUntil: 0,
       seats: Array.from({ length: count }, (_, i) => ({
         id: `p${i}`, kind: 'open' as const, name: null,
       })),
@@ -224,6 +283,8 @@ export class Hub {
       roomId: room.id,
       seats: room.seats.map((s) => ({ ...s })),
       canBegin: room.seats.every((s) => s.kind !== 'open'),
+      host: room.host,
+      speed: room.speed,
     };
     return [...room.conns.values()].map((conn) => ({ conn, msg }));
   }
@@ -268,7 +329,7 @@ export class Hub {
     });
     // Everyone already here is present; the lobby starts assuming otherwise.
     for (const seatId of room.conns.keys()) room.lobby.reconnect(seatId, now);
-    return this.deliver(room, room.lobby.room.deal());
+    return this.deliver(room, room.lobby.room.deal(), now);
   }
 
   private join(conn: string, roomId: string, name: string, now: number): Envelope[] {
@@ -292,9 +353,15 @@ export class Hub {
     room.conns.set(free.id, conn);
     this.sessions.set(conn, { roomId, seat: free.id });
     room.lobby?.reconnect(free.id, now);
+    // The first human to sit down owns the pacing. Nobody before that: a room
+    // of empty chairs has no one to own anything.
+    room.host ??= free.id;
 
     return [
-      { conn, msg: { t: 'joined', roomId, seat: free.id, token, dev: this.devTools } },
+      { conn, msg: {
+        t: 'joined', roomId, seat: free.id, token, dev: this.devTools,
+        host: room.host === free.id, speed: room.speed,
+      } },
       ...(room.lobby ? this.syncAll(room) : this.tableFor(room)),
     ];
   }
@@ -311,33 +378,68 @@ export class Hub {
     const events = room.lobby?.reconnect(seat, now) ?? [];
 
     return [
-      { conn, msg: { t: 'joined', roomId, seat, token, dev: this.devTools } },
+      { conn, msg: {
+        t: 'joined', roomId, seat, token, dev: this.devTools,
+        host: room.host === seat, speed: room.speed,
+      } },
       ...(room.lobby ? this.syncAll(room) : this.tableFor(room)),
       ...this.lobbyEvents(room, events),
     ];
   }
 
-  private command(conn: string, command: Command): Envelope[] {
+  /**
+   * The host sets the tempo. Everyone else is told what it is.
+   *
+   * Refused rather than ignored: a control that silently does nothing is worse
+   * than one that says no, and the client only renders it for the host anyway
+   * — so anybody reaching this branch is not using the UI.
+   */
+  private setSpeed(conn: string, value: Speed): Envelope[] {
+    const session = this.sessions.get(conn);
+    const room = session && this.rooms.get(session.roomId);
+    if (!room || !session) return [err(conn, 'Not seated')];
+    if (room.host !== session.seat) return [err(conn, 'Only the host sets the speed')];
+    room.speed = value;
+    return this.speedFor(room);
+  }
+
+  /** Tell everyone in the room the tempo, and whether they own it. */
+  private speedFor(room: Room): Envelope[] {
+    return [...room.conns.entries()].map(([seat, conn]) => ({
+      conn,
+      msg: {
+        t: 'speed' as const, host: room.host, speed: room.speed,
+        you: room.host === seat,
+      },
+    }));
+  }
+
+  private command(conn: string, command: Command, now: number): Envelope[] {
     const session = this.sessions.get(conn);
     if (!session) return [err(conn, 'Not seated')];
     const room = this.rooms.get(session.roomId);
     if (!room) return [err(conn, 'No such room')];
 
     if (!room.lobby) return [err(conn, 'The game has not begun')];
+    /*
+      Nothing lands behind a Dusk or the Turning.
+
+      Refused rather than queued: a move accepted now and applied in three
+      seconds is a move made against a board the player could not see, and in
+      a hidden-role game the timing of a click is itself a tell. The client
+      hides its controls behind the same sheet, so anyone reaching this is
+      either racing the animation or not using the UI.
+    */
+    if (now < room.lockedUntil) return [err(conn, 'Wait for the light to change')];
     // The seat comes from the connection, never from the message.
     const res = room.lobby.room.submit(session.seat, command);
     if (!res.ok) return [err(conn, res.error)];
 
-    return res.updates.flatMap((u) => {
-      const target = room.conns.get(u.seat);
-      return target
-        ? [{ conn: target, msg: {
-            t: 'state' as const,
-            view: u.view, events: u.events, legal: u.legal,
-            bots: room.lobby?.room.botSeats ?? [],
-          } }]
-        : [];
-    });
+    // Through `deliver`, not a second copy of it. This used to build the same
+    // envelopes inline, which meant a Dusk brought on by a HUMAN ending their
+    // turn skipped the commit lock entirely — the one path most likely to
+    // trigger one.
+    return this.deliver(room, res.updates, now);
   }
 
   private vote(
@@ -366,6 +468,7 @@ export class Hub {
     const room = this.rooms.get(session.roomId);
     if (!room) return [];
     if (room.conns.get(session.seat) === conn) room.conns.delete(session.seat);
+    const wasHost = this.rehost(room, session.seat);
 
     // Before the deal there is nothing to hold a seat for: someone who closes
     // the tab has left the queue, and the chair should go back to whoever is
@@ -383,7 +486,28 @@ export class Hub {
     }
 
     // The token survives, so the seat can be reclaimed.
-    return this.lobbyEvents(room, room.lobby.disconnect(session.seat, now));
+    return [
+      ...this.lobbyEvents(room, room.lobby.disconnect(session.seat, now)),
+      ...(wasHost ? this.speedFor(room) : []),
+    ];
+  }
+
+  /**
+   * Hand the pacing on if the host has gone. Returns whether it moved.
+   *
+   * Silent, no vote, next connected seat in order. A room whose host has left
+   * is a room nobody can change the speed of, and that is the failure mode of
+   * every host-with-exclusive-rights design — so the answer is that the role
+   * never goes vacant while anybody is still here.
+   *
+   * Null only when the room is empty, at which point nothing is listening.
+   */
+  private rehost(room: Room, leaving: PlayerId): boolean {
+    if (room.host !== leaving) return false;
+    room.host = room.seats.find(
+      (s) => s.kind === 'human' && s.id !== leaving && room.conns.has(s.id),
+    )?.id ?? null;
+    return true;
   }
 
   /**
@@ -400,16 +524,22 @@ export class Hub {
 
       const game = room.lobby.room;
       if (game.awaitingBot) {
-        const due = this.nextBotAt.get(id) ?? 0;
+        // Both gates. `nextBotAt` is the pacing; `lockedUntil` is the
+        // animation, and it also covers a Dusk a HUMAN brought on — the pacing
+        // clock knows nothing about that one.
+        const due = Math.max(this.nextBotAt.get(id) ?? 0, room.lockedUntil);
         if (now >= due) {
           const updates = game.stepBot();
           if (updates) {
-            out.push(...this.deliver(room, updates));
+            out.push(...this.deliver(room, updates, now));
             const active = updates[0]?.view.activePlayer;
             const changed = !!active && this.lastActive.get(id) !== active;
             if (active) this.lastActive.set(id, active);
             this.nextBotAt.set(
-              id, now + this.pauseAfter(updates[0]?.events ?? [], changed),
+              id,
+              now + this.pauseAfter(
+                updates[0]?.events ?? [], changed, room.speed,
+              ),
             );
           }
         }
@@ -438,17 +568,39 @@ export class Hub {
    * crawl. An action that says nothing gets out of the way instead. Capped,
    * because a bad Dusk should slow the table down, not stop it.
    */
-  private pauseAfter(events: readonly GameEvent[], turnChanged: boolean): number {
+  private pauseAfter(
+    events: readonly GameEvent[], turnChanged: boolean, speed: Speed,
+  ): number {
     const beats = beatsIn(events, turnChanged);
     const paced = beats === 0
       ? this.quietMs
-      : this.botDelayMs + this.readMs * Math.min(beats - 1, 8)
-        + (hasDusk(events) ? this.duskMs : 0)
-        + (hasTurning(events) ? this.turningMs : 0);
+      : this.botDelayMs + this.readMs * Math.min(beats - 1, 8);
     // The floor applies to every action, silent ones included. A bot that
     // spends a card for Grit has still moved a card off the table, and at this
     // pace that is worth a look.
-    return Math.max(this.minGapMs, paced);
+    const scaled = Math.round(Math.max(this.minGapMs, paced) * SPEED[speed]);
+    /*
+      The animation holds are added AFTER the multiplier and are never scaled.
+
+      Speed is about how fast bots think, not about how fast the sun goes down.
+      Dusk and the Turning are fixed-length pieces on the client — 2.4s and
+      3.1s — and scaling their pauses at `fastest` left about a second for a
+      three-second animation, which does not make the game quicker, it makes it
+      wrong: the client's own hold outlasts the server's pause and the lag
+      accumulates for the rest of the game.
+    */
+    return scaled + this.holdFor(events);
+  }
+
+  /**
+   * How long the table is watching something, whatever the speed.
+   *
+   * The same number feeds the bot pause and the commit lock, so the two cannot
+   * drift: bots wait exactly as long as everyone is locked out for.
+   */
+  private holdFor(events: readonly GameEvent[]): number {
+    return (hasTurning(events) ? this.turningMs : 0)
+      + (hasDusk(events) ? this.duskMs : 0);
   }
 
   /**
@@ -490,8 +642,16 @@ export class Hub {
 
   // --------------------------------------------------------------- sending
 
-  /** Route per-seat updates to whoever is holding that seat. */
-  private deliver(room: Room, updates: Update[]): Envelope[] {
+  /**
+   * Route per-seat updates to whoever is holding that seat.
+   *
+   * Also the single place the commit lock is set, because it is the single
+   * place events reach the table — a bot's move and a human's arrive here
+   * alike, and a Dusk brought on by either locks the room for the same length.
+   */
+  private deliver(room: Room, updates: Update[], now = 0): Envelope[] {
+    const hold = this.holdFor(updates.flatMap((u) => u.events));
+    if (hold) room.lockedUntil = Math.max(room.lockedUntil, now + hold);
     return updates.flatMap((u) => {
       const target = room.conns.get(u.seat);
       return target
@@ -561,6 +721,11 @@ function parse(raw: unknown): Inbound | null {
         && (m.kind === 'bot' || m.kind === 'open') ? (m as Inbound) : null;
     case 'begin':
       return typeof m.marked === 'boolean' ? (m as Inbound) : null;
+    case 'speed':
+      // Checked against the literals rather than `typeof string`: this value
+      // indexes SPEED, and an unknown key there is `undefined * a number`.
+      return m.value === 'normal' || m.value === 'fast' || m.value === 'fastest'
+        ? (m as Inbound) : null;
     default:
       return null;
   }

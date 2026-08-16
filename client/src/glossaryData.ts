@@ -108,9 +108,22 @@ export const GLOSSARY: Record<string, Entry> = {
   damage: {
     term: 'Damage', also: ['damage'],
     short: 'You lose cards off your deck. There is no health bar.',
-    long: 'Damage trashes cards, taking Kit and Provisions before Signs. A '
-      + 'wounded player does not just get weaker, they get more corrupt — and a '
-      + 'thin deck is a fragile one. Chaff is armour here.',
+    long: 'Damage takes cards off the TOP of your deck — you do not choose '
+      + 'which, and because the deck is shuffled you cannot know. It takes Kit '
+      + 'and Provisions before Signs, so a wounded player does not just get '
+      + 'weaker, they get more corrupt. Last Words is taken last of all. A thin '
+      + 'deck is a fragile one: chaff is armour here.',
+  },
+  trash: {
+    term: 'Trash', also: ['trash', 'trashed', 'trashes', 'trashing'],
+    short: 'The card is gone for good, to the boneyard.',
+    long: 'Trashed cards go to the boneyard and never come back — there is no '
+      + 'other way to remove a card, which is why decks only ever grow. Where '
+      + 'the card comes from depends on the wording. "In hand" takes your '
+      + 'leftmost card that is not a Sign, so you can see it coming; damage '
+      + 'takes off the top of your shuffled deck, so you cannot. Signs are '
+      + 'never trashed while anything else remains, and a Scar cannot be '
+      + 'trashed at all.',
   },
   deck: {
     term: 'Your deck', also: ['deck'],

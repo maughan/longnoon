@@ -24,8 +24,25 @@ export function setup(opts: SetupOptions): GameState {
     turnOrder.push(id);
     // Chaff is armour when the deck is your health (DESIGN.md §5), so the
     // starting deck pads with Saddlebags rather than with anything useful.
-    const ids = [...STARTING_DECK];
-    while (ids.length < tuning.startingDeckSize) ids.push('saddlebag');
+    /*
+      Built from TUNING rather than taken as a literal list.
+
+      The padding is the interesting part and it was invisible: the base list
+      is 8 cards, `startingDeckSize` is 12, and the gap was filled with
+      Saddlebags — so the deck people reason about ("3 of 8 are blank") is not
+      the deck they play ("7 of 12"). Both the attack count and the filler are
+      axes now, because that one edit diluted the attacks AND added the blanks.
+    */
+    const at = STARTING_DECK.indexOf('six-gun');
+    const ids = [
+      ...STARTING_DECK.slice(0, at),
+      ...new Array(tuning.starterGuns).fill('six-gun'),
+      ...STARTING_DECK.slice(at).filter((c) => c !== 'six-gun'),
+    ];
+    const mix = tuning.padMix.length ? tuning.padMix : ['saddlebag'];
+    while (ids.length < tuning.startingDeckSize) {
+      ids.push(mix[(ids.length - STARTING_DECK.length) % mix.length]!);
+    }
     ids.length = Math.min(ids.length, tuning.startingDeckSize);
     const r = shuffle(ids.map(mk), opts.seed, cursor);
     cursor = r.cursor;

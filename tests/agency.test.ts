@@ -30,7 +30,20 @@ test('Act II agency', () => {
       if (!legal.length) break;
       const status = s.players[actor].status;
 
-      if (s.act === 'mythos' && !s.pending && status !== 'gone') {
+      /*
+        Only turns with an action left.
+
+        This used to count every turn, and for the posse that was harmless:
+        SPEND_GRIT is not an action, so a posse player who had spent all three
+        still had a legal move and scored as "live". The Vessel cannot cash in
+        any more — Grit buys from a market it cannot use — so the same metric
+        started reporting 75% for a seat that is genuinely stuck on **2 turns
+        out of 584**. It was measuring "can cash in", not "has something to do".
+
+        A turn with no actions left is a FINISHED turn. Asking whether it has
+        a move is asking the wrong question of it.
+      */
+      if (s.act === 'mythos' && !s.pending && status !== 'gone' && s.actionsLeft > 0) {
         const real = legal.filter((c) => c.t !== 'END_TURN');
         const bucket = status === 'vessel' ? 'vessel'
           : status === 'revenant' ? 'revenant' : 'posse';
@@ -63,7 +76,21 @@ test('Act II agency', () => {
   expect(live / all, 'Act II turns with something to do').toBeGreaterThan(0.9);
   // Each seat separately, or a healthy posse could hide a dead Vessel.
   expect(tally.posseLive / tally.posse).toBeGreaterThan(0.9);
-  expect(tally.vesselLive / tally.vessel).toBeGreaterThan(0.9);
+  /*
+    The Vessel's floor is LOWER than the posse's, and deliberately.
+
+    This was 0.9, written when the seat had five permanent buttons and could
+    therefore never be stuck. Its actions are cards now, and its deck shrinks
+    one card per recycle down to `vesselDeckFloor` — so a late Act II Vessel
+    genuinely runs out of things to do, and that is the burn-out clock rather
+    than a dead mechanic.
+
+    Measured at 2 stuck turns in 584 once finished turns are excluded — the
+    Vessel's deck cannot run out, and `handSize` (5) exceeds `actionsPerTurn`
+    (3), so a hand cannot be emptied inside one turn. The two exceptions are
+    hands emptied across a Dusk boundary.
+  */
+  expect(tally.vesselLive / tally.vessel).toBeGreaterThan(0.99);
   // The replacements are actually reachable, not merely defined. SHUTTER,
   // OFFER and CALL are cards now rather than commands, so what has to be
   // reachable is PLAY_CARD from the Vessel's seat — checked above by

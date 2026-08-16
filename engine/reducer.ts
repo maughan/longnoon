@@ -514,6 +514,16 @@ export function checkTurning(s: GameState, ev: GameEvent[]): void {
     v.deck = r.items;
     v.hand = [];
     v.discard = [];
+    /*
+      Deal them in immediately.
+
+      `checkTurning` runs at the END of the command, by which point `endTurn`
+      has already advanced the turn and `startTurn` has dealt a hand — from the
+      OLD deck, which is then thrown away three lines above. Without this the
+      Vessel spends its very first turn holding nothing, which reads as the new
+      deck being broken rather than as a turn-order accident.
+    */
+    drawCards(s, vessel, s.tuning.handSize, ev);
   }
   if (marked) s.revealedRoles.push(marked);
   if (!s.revealedRoles.includes(vessel)) s.revealedRoles.push(vessel);

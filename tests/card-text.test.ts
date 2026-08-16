@@ -3,7 +3,7 @@
 // once about an Omen's Menace. Both times a test would have caught it.
 
 import { describe, it, expect } from 'vitest';
-import { ALL_CARDS, card } from '../content/cards';
+import { ALL_CARDS, SIGN_IDS, card } from '../content/cards';
 import { opsFor } from '../engine/effects';
 import { describeOps, cardKeywords, thirdLine } from '../client/src/cardText';
 import { GLOSSARY } from '../client/src/glossaryData';
@@ -127,5 +127,69 @@ describe('the third line', () => {
     const choir = cardKeywords(card('dry-grass'), false);
     expect(choir).toContain('toll');
     expect(choir).toContain('scars');
+  });
+});
+
+describe('what the market advertises', () => {
+  /**
+   * A Sign bought in Act II arrives Fevered.
+   *
+   * `BUY` does `newInstance(def.id, s.act === 'mythos')`, so the shelf showing
+   * a clean face after the Turning is advertising a card the shop does not
+   * sell. These assert the two faces really are different, which is what makes
+   * showing the wrong one a lie rather than a nicety.
+   */
+  it('a Sign reads differently once it has turned', () => {
+    for (const id of SIGN_IDS) {
+      const clean = thirdLine(card(id), false);
+      const turned = thirdLine(card(id), true);
+      const name = card(id).fevered!.name;
+      expect(name, `${id} has no Fevered name`).toBeTruthy();
+      expect(name).not.toBe(card(id).name);
+      // Most also read differently; the Colt is a pure retarget, so its text
+      // can legitimately match — the NAME is what always changes.
+      expect(typeof clean).toBe('string');
+      expect(typeof turned).toBe('string');
+    }
+  });
+});
+
+describe('what "trash" actually does', () => {
+  /**
+   * Trash is two unrelated rules under one word, and neither was on the card.
+   *
+   * "In hand" takes your leftmost non-Sign — deterministic and visible, so a
+   * player can play around it once told. Damage takes off the top of a
+   * shuffled deck, which they cannot. The old text said "Trash 1 of your own"
+   * for both, which told them a card would vanish and nothing about which.
+   */
+  it('names where the card comes from, and which one', () => {
+    expect(thirdLine(card('widow'), false))
+      .toBe('Trash your leftmost non-Sign in hand');
+    // Bad Nerve draws first, then pays.
+    expect(thirdLine(card('bad-nerve'), false))
+      .toBe('Draw 2 · Trash your leftmost non-Sign in hand');
+  });
+
+  it('capitalises a named type the way the card face does', () => {
+    // `kind` is a raw CardType and lowercase; "leftmost sign" read as a typo.
+    expect(describeOps(card('dry-grass').toll!)).toContain('leftmost Sign');
+  });
+
+  it('calls deck-trashing what it is — damage', () => {
+    // `trash` from the deck with no kind named routes to `damagePlayer`. It
+    // was printing "Trash 1 of your own", which describes a different rule
+    // from the one that runs.
+    expect(describeOps([{ op: 'trash', n: 1, from: 'deck', target: 'self' }]))
+      .toBe('Take 1 damage');
+    expect(describeOps([{ op: 'trash', n: 2, from: 'deck', target: 'all' }]))
+      .toBe('Everyone takes 2 damage');
+  });
+
+  it('explains both halves in one glossary entry', () => {
+    const t = GLOSSARY.trash!;
+    expect(t.long).toMatch(/leftmost/);
+    expect(t.long).toMatch(/top of your shuffled deck/);
+    expect(t.long).toMatch(/boneyard/);
   });
 });

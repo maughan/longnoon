@@ -496,6 +496,23 @@ export interface Tuning {
   /** How many rounds NOT THAT ONE keeps a card type off the table. */
   shutterDuration: number;
   /**
+   * Attacks in the opening deck, and what the padding is made of.
+   *
+   * Sweep axes for the dead-hand experiment. The base list is 8 cards and
+   * `startingDeckSize` is 12, so FOUR of the twelve are padding — which is
+   * where most of the Saddlebags come from, and why the deck is 58% blank
+   * rather than the 37% the base list suggests.
+   */
+  starterGuns: number;
+  /**
+   * What fills the deck out to `startingDeckSize`, cycled.
+   *
+   * A LIST, not one card: the four padding slots are the lever, and the
+   * interesting settings are mixtures. `['saddlebag']` cycles to four
+   * Saddlebags, which is what the game shipped with.
+   */
+  padMix: string[];
+  /**
    * Whether a Threat that can never be cleared escalates too.
    *
    * A flag rather than a rule because it is a real design fork, and it is worth

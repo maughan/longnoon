@@ -414,3 +414,151 @@ describe('the table, before the deal', () => {
     expect(seen.has('faithful'), 'the creator is not always Marked').toBe(true);
   });
 });
+
+describe('game speed, and the one control with an owner', () => {
+  /** Two humans at a three-chair table, not yet dealt. */
+  function seated() {
+    const hub = new Hub({ newId: ids() });
+    const made = hub.handle('a', { t: 'create', seats: 3, seed: 'spd' }, 0);
+    const roomId = (made[0]!.msg as { roomId: string }).roomId;
+    const first = hub.handle('a', { t: 'join', roomId, name: 'Ada' }, 0);
+    const second = hub.handle('b', { t: 'join', roomId, name: 'Bo' }, 0);
+    return { hub, roomId, first, second };
+  }
+
+  const joined = (out: ReturnType<Hub['handle']>) =>
+    out.find((e) => e.msg.t === 'joined')!.msg as
+      Extract<Outbound, { t: 'joined' }>;
+
+  it('makes the first human to sit down the host', () => {
+    // Not whoever sent `create`: that opens chairs and seats nobody, so it
+    // would hand the room to someone who might never sit in it.
+    const { first, second } = seated();
+    expect(joined(first).host).toBe(true);
+    expect(joined(second).host).toBe(false);
+    expect(joined(first).speed).toBe('normal');
+  });
+
+  it('lets the host set it and tells the whole table', () => {
+    const { hub } = seated();
+    const out = hub.handle('a', { t: 'speed', value: 'fastest' }, 0);
+    const msgs = out.filter((e) => e.msg.t === 'speed');
+    expect(msgs).toHaveLength(2);
+    for (const e of msgs) {
+      const m = e.msg as Extract<Outbound, { t: 'speed' }>;
+      expect(m.speed).toBe('fastest');
+      // Each seat is told whether IT owns the control, not who does.
+      expect(m.you).toBe(e.conn === 'a');
+    }
+  });
+
+  it('refuses anyone else, rather than ignoring them', () => {
+    // A control that silently does nothing is worse than one that says no —
+    // and the client only renders it for the host, so anybody reaching this
+    // is not using the UI.
+    const { hub } = seated();
+    const out = hub.handle('b', { t: 'speed', value: 'fast' }, 0);
+    expect(out.map((e) => e.msg.t)).toEqual(['error']);
+    expect((out[0]!.msg as { message: string }).message)
+      .toBe('Only the host sets the speed');
+  });
+
+  it('rejects a speed that is not one of the three', () => {
+    // The value indexes a multiplier table; an unknown key there is
+    // `undefined * a number`, which is NaN, which is a pause that never ends.
+    const { hub } = seated();
+    for (const bad of ['turbo', '', 2, null]) {
+      const out = hub.handle('a', { t: 'speed', value: bad } as never, 0);
+      expect(out.map((e) => e.msg.t), String(bad)).toEqual(['error']);
+    }
+  });
+
+  it('hands the role on when the host goes, with no vote', () => {
+    // A room whose host has left is a room nobody can change the speed of.
+    const { hub } = seated();
+    const out = hub.disconnect('a', 1000);
+    const told = out.filter((e) => e.msg.t === 'table' || e.msg.t === 'speed');
+    expect(told.length).toBeGreaterThan(0);
+
+    // Bo can now set it, and is told so.
+    const now = hub.handle('b', { t: 'speed', value: 'fast' }, 2000);
+    expect(now.some((e) => e.msg.t === 'error')).toBe(false);
+    const m = now.find((e) => e.msg.t === 'speed')!.msg as
+      Extract<Outbound, { t: 'speed' }>;
+    expect(m.speed).toBe('fast');
+    expect(m.you).toBe(true);
+  });
+});
+
+describe('nothing lands behind an animation', () => {
+  /** A three-chair table with one human and two bots, dealt. */
+  function dealt(speed?: 'normal' | 'fast' | 'fastest') {
+    const hub = new Hub({ newId: ids(), minGapMs: 1500, duskMs: 2400 });
+    const made = hub.handle('a', { t: 'create', seats: 3, seed: 'lock' }, 0);
+    const roomId = (made[0]!.msg as { roomId: string }).roomId;
+    hub.handle('a', { t: 'join', roomId, name: 'Ada' }, 0);
+    hub.handle('a', { t: 'seat', index: 1, kind: 'bot' }, 0);
+    hub.handle('a', { t: 'seat', index: 2, kind: 'bot' }, 0);
+    if (speed) hub.handle('a', { t: 'speed', value: speed }, 0);
+    hub.handle('a', { t: 'begin', marked: true }, 0);
+    return { hub, roomId };
+  }
+
+  const hasDuskIn = (out: Envelope[]) =>
+    out.some((e) => e.msg.t === 'state'
+      && (e.msg as { events: { t: string; phase?: string }[] }).events
+        .some((ev) => ev.t === 'PHASE' && ev.phase === 'dusk'));
+
+  /**
+   * Push the table until a Dusk lands, and say when.
+   *
+   * `tick` only moves bots, so the human seat has to be driven too or the
+   * round never finishes and no Dusk ever arrives.
+   */
+  function untilDusk(hub: Hub, from: number): number {
+    for (let t = from; t < from + 600_000; t += 250) {
+      if (hasDuskIn(hub.tick(t))) return t;
+      // Ends the human's turn whenever it is theirs; refused otherwise, and a
+      // refusal is exactly what we want to ignore here.
+      if (hasDuskIn(hub.handle('a', { t: 'command', command: { t: 'END_TURN' } }, t))) {
+        return t;
+      }
+    }
+    throw new Error('no Dusk');
+  }
+
+  it('refuses a human command while the sun is going down', () => {
+    const { hub } = dealt();
+    const at = untilDusk(hub, 0);
+
+    // Mid-animation: refused, and told why rather than silently dropped.
+    const during = hub.handle('a', { t: 'command', command: { t: 'END_TURN' } }, at + 500);
+    expect(during.map((e) => e.msg.t)).toEqual(['error']);
+    expect((during[0]!.msg as { message: string }).message)
+      .toBe('Wait for the light to change');
+
+    // After it, the refusal is gone — whatever the rules then say.
+    const after = hub.handle('a', { t: 'command', command: { t: 'END_TURN' } }, at + 3000);
+    const msg = after[0]!.msg as { t: string; message?: string };
+    expect(msg.message).not.toBe('Wait for the light to change');
+  });
+
+  it('holds the bots for the same length, not a different one', () => {
+    // One number feeds both, so they cannot drift apart.
+    const { hub } = dealt();
+    const at = untilDusk(hub, 0);
+    expect(hub.tick(at + 500).some((e) => e.msg.t === 'state')).toBe(false);
+    expect(hub.tick(at + 1200).some((e) => e.msg.t === 'state')).toBe(false);
+  });
+
+  it('does not shorten the hold at fastest', () => {
+    // Speed is how fast bots think, not how fast the sun goes down. At 0.15 a
+    // scaled hold left about a second for a multi-second animation, which does
+    // not make the game quicker — it makes the client outlast the server.
+    const { hub } = dealt('fastest');
+    const at = untilDusk(hub, 0);
+    const during = hub.handle('a', { t: 'command', command: { t: 'END_TURN' } }, at + 900);
+    expect((during[0]!.msg as { message?: string }).message)
+      .toBe('Wait for the light to change');
+  });
+});

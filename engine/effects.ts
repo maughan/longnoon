@@ -56,6 +56,25 @@ export function livingPlayers(s: GameState): PlayerId[] {
 
 function refill(s: GameState, pid: PlayerId, ev: GameEvent[]): void {
   const p = s.players[pid];
+  /*
+    The Vessel's deck does not run out.
+
+    Damage trashes cards to the boneyard with no floor on it, so the posse
+    could burn the deck away entirely — and a Vessel with nothing in hand,
+    deck or discard sits through its own turns doing nothing, which is the
+    least frightening thing it could possibly do. Measured at 10 of 534 Act II
+    Vessel turns before this.
+    
+    Rebuilt rather than floored, because a floor only bounds the DECAY path and
+    damage is a second way to the same empty pile. This is the intentions of
+    the thing behind the door; it does not run low on those.
+  */
+  if (p.status === 'vessel' && !p.deck.length && !p.discard.length) {
+    for (const [id, n] of Object.entries(s.tuning.vesselDeck)) {
+      for (let i = 0; i < n; i++) p.discard.push(newInstance(s, id));
+    }
+    ev.push({ t: 'RESHUFFLED', player: pid, n: p.discard.length });
+  }
   if (p.deck.length || !p.discard.length) return;
   const r = shuffle(p.discard, s.seed, s.rngCursor);
   s.rngCursor = r.cursor;
@@ -65,8 +84,16 @@ function refill(s: GameState, pid: PlayerId, ev: GameEvent[]): void {
   // "You shrink." The Vessel floors at one card so the endgame cannot stall;
   // a Revenant is allowed to run out completely — burning out is what replaced
   // burial as the posse's answer to them.
-  const floor = p.status === 'vessel' ? s.tuning.vesselDeckFloor : 0;
-  if (p.status === 'revenant' || p.status === 'vessel') {
+  /*
+    Only the Revenants shrink now.
+
+    The Vessel used to as well, for an Act II clock — but a deck that shrinks
+    to a floor and a deck that cannot run out are two rules arguing about the
+    same pile, and "the Vessel always has something to do" won. The Act II
+    clock is Doom and the burial track; it does not need a third.
+  */
+  const floor = 0;
+  if (p.status === 'revenant') {
     for (let i = 0; i < s.tuning.revenantDecay && p.deck.length > floor; i++) {
       p.boneyard.push(p.deck.pop()!);
     }

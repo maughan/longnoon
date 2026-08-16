@@ -128,6 +128,39 @@ export const TUNING: Tuning = {
   // One round. Long enough to wreck a plan, short enough that a bad guess
   // costs the Vessel a turn rather than the posse a game.
   shutterDuration: 1,
+  starterGuns: 2,
+  /*
+    (measured) The four padding slots, and the one lever that actually moves
+    dead hands.
+
+    `startingDeckSize` is 12 but the base list is 8, so FOUR cards are padding
+    — and they were all Saddlebags, which is why the deck people reason about
+    ("3 of 8 are blank") is not the deck they played ("7 of 12", 58% blank).
+    That single edit both diluted the attacks and added the blanks: 31.7% of
+    opening hands held no attack at all.
+
+    Swept 200 games an arm. Dead hands in Act I, and Zealot alongside, because
+    every Six-Gun in the starting deck is one the Zealot gets for free:
+
+        4 sad / 0 gun   50.3%   Zealot  6.0%   <- was
+        3 sad / 1 gun   37.4%   Zealot 11.0%   <- is
+        2 sad / 2 gun   28.8%   Zealot 22.5%
+        1 sad / 3 gun   20.7%   Zealot 34.0%
+        0 sad / 4 gun   17.9%   Zealot 49.0%
+
+    3/1 is the best exchange rate on the curve: 13 points of dead hands for 5
+    of Zealot, and runaway escalation 75% -> 62%. Past 2/2 the honest route
+    stops losing and DESIGN.md §2's central test goes with it.
+
+    TWO THINGS THIS DOES NOT FIX, both measured:
+      - Act II barely moves (43.1% -> 42.8%). Act II dead hands are a
+        different problem with a different cause; no opening-deck tuning
+        reaches them.
+      - Substituting a Canteen instead of a Six-Gun buys almost nothing
+        (Act II 45.9%, escalation 70%). It is the ATTACK that matters, not
+        "a card with an effect" — the blank-card theory on its own is wrong.
+  */
+  padMix: ['saddlebag', 'saddlebag', 'saddlebag', 'six-gun'],
   // (measured) Off. An Omen arriving in round 2 would otherwise be dealing 8+
   // Menace by round 9, unanswerably — it cannot be cleared and, now that
   // overflow leaves Threats standing, cannot be pushed out either. Turning this

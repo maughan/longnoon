@@ -38,9 +38,19 @@ export function legalCommands(s: GameState, pid: PlayerId): Command[] {
     if (hasAction && !shuttered(s, card(ci.cardId).type)) {
       out.push({ t: 'PLAY_CARD', uid: ci.uid });
     }
-    // Cashing in is not playing. A closed door on Signs should not also stop
-    // you selling one for the Grit to buy something else.
-    if (card(ci.cardId).grit > 0) out.push({ t: 'SPEND_GRIT', uids: [ci.uid] });
+    /*
+      Cashing in is not playing. A closed door on Signs should not also stop
+      you selling one for the Grit to buy something else.
+
+      Not the Vessel, though. Grit buys from the market and the Vessel cannot
+      buy, so cashing in would be turning cards into a currency with nothing
+      to spend it on — a live button that does nothing, which is worse than no
+      button. It also takes the market and the counter off that seat's screen
+      entirely: what is left is play a card and end your turn.
+    */
+    if (p.status !== 'vessel' && card(ci.cardId).grit > 0) {
+      out.push({ t: 'SPEND_GRIT', uids: [ci.uid] });
+    }
   }
 
   // A Toll is the answer to a slot nothing can shoot, and is only offered when

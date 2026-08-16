@@ -9,6 +9,14 @@ import type { Command, GameEvent, PlayerId } from '../engine/state';
 import type { ClientState } from '../engine/view';
 import type { LobbyEvent, VoteState } from './lobby';
 
+/**
+ * How fast the bots play, and nothing else.
+ *
+ * Only bot pacing — a human's turn takes as long as it takes. The multipliers
+ * live in `server/hub.ts`, because the pauses do.
+ */
+export type Speed = 'normal' | 'fast' | 'fastest';
+
 /** A chair at the table, before there is a game to play at it. */
 export interface TableSeat {
   id: PlayerId;
@@ -46,6 +54,19 @@ export interface ClientMsg {
   /** Deal. Every chair must be filled first. */
   begin: { marked: boolean };
   /**
+   * How fast the bots play. **Host only.**
+   *
+   * The one setting with an owner, and the exception narrows the ruling above
+   * rather than reversing it: chairs and `begin` stay open to everyone. Pacing
+   * is table-wide, continuous, and not worth interrupting a game to negotiate
+   * — a speed control that needs three people to agree is worse than no speed
+   * control.
+   *
+   * Room state, not a client preference: it has to survive a reconnect and be
+   * the same for everyone watching the same bots move.
+   */
+  speed: { value: Speed };
+  /**
    * Development affordances: force the Turning, deal a fresh game.
    *
    * Rejected outright unless the server was started with `devTools: true`, and
@@ -60,7 +81,12 @@ export interface ServerMsg {
   /** A room exists. Creating one does not seat you — `join` does. */
   created: { roomId: string };
   /** `dev` tells the client whether to offer the act controls at all. */
-  joined: { roomId: string; seat: PlayerId; token: string; dev: boolean };
+  joined: {
+    roomId: string; seat: PlayerId; token: string; dev: boolean;
+    /** Whether THIS seat is the host, so the client knows to offer the control. */
+    host: boolean;
+    speed: Speed;
+  };
   /**
    * The room before the deal: who is here, which chairs are empty.
    *
@@ -72,7 +98,19 @@ export interface ServerMsg {
     seats: TableSeat[];
     /** False while any chair is still empty. */
     canBegin: boolean;
+    /** Who owns the pacing control. Null only in a room with nobody in it. */
+    host: PlayerId | null;
+    speed: Speed;
   };
+  /**
+   * The pacing changed, or the host did.
+   *
+   * Its own message rather than a re-sent `table`: the client treats a `table`
+   * as "we are in the waiting room", so broadcasting one mid-game would eject
+   * everybody from the board to the lobby screen. This carries the two fields
+   * that actually moved and disturbs nothing else.
+   */
+  speed: { host: PlayerId | null; speed: Speed; you: boolean };
   /**
    * `legal` is sent because a client cannot derive it: `legalCommands` needs
    * `GameState`, and a client only ever holds `playerView` output. Shipping the

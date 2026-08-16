@@ -64,10 +64,30 @@ function describeEach(ops: readonly Op[]): string[] {
           return `+${op.n} actions`;
         case "whisper":
           return `+${op.n} Whisper`;
-        case "trash":
+        /*
+          Say WHERE it comes from and WHICH card goes.
+
+          "Trash 1 of your own" told the player a card would vanish and nothing
+          about which one, so the card that went looked arbitrary — and it is
+          not arbitrary, it is the leftmost non-Sign in your hand. A rule you
+          can see is a rule you can play around; one you cannot is just a card
+          disappearing.
+        */
+        case "trash": {
+          // The raw CardType is lowercase; the card face is not.
+          const what = op.kind
+            ? op.kind.charAt(0).toUpperCase() + op.kind.slice(1)
+            : "non-Sign";
+          if (op.from === "hand") {
+            return op.target === "self"
+              ? `Trash your leftmost ${what} in hand`
+              : `Everyone trashes their leftmost ${what} in hand`;
+          }
+          // From the deck with no kind named IS damage — same code path.
           return op.target === "self"
-            ? `Trash ${op.n} of your own`
-            : `Everyone trashes ${op.n}`;
+            ? `Take ${op.n} damage`
+            : `Everyone takes ${op.n} damage`;
+        }
         case "scar":
         // Added with Tolls and never given words, so Choir of the Dry Grass
         // printed the literal string "scar" where its price should read.

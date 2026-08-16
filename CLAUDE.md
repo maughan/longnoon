@@ -294,6 +294,88 @@ than any one number should.
 Watch the other rows while you do: early deaths sit at **72%**, which predates
 all of this and is tracked under "Still open: falls are early now".
 
+## The starting deck is 12, not 8, and the padding is the lever
+
+`STARTING_DECK` is an 8-card list. `startingDeckSize` is **12**. `setup` fills
+the gap — so **four of the twelve cards are padding**, and the deck people
+reason about is not the deck they play. This has misled at least one round of
+analysis: "three of eight starting cards are blank" is really **seven of
+twelve**, 58%, and 31.7% of opening hands held no attack at all against a
+predicted 10.7%.
+
+Both halves of the usual complaint come from that one edit: padding with
+Saddlebags diluted the attacks AND added the blanks. They are not independent
+causes, and testing them separately double-counts.
+
+**Ruled: `padMix: ['saddlebag', 'saddlebag', 'saddlebag', 'six-gun']`** — three
+Saddlebags and a Six-Gun. Opening hands with no attack go **31.7% -> 16.0%**.
+Swept 200 games an arm, Act I dead hands against Zealot, because every Six-Gun
+in the starting deck is one the Zealot gets for free:
+
+| padding | dead Act I | dead Act II | esc>=3 | Zealot | Balanced |
+|---|---|---|---|---|---|
+| 4 sad / 0 gun (was) | 50.3% | 43.1% | 75.0% | 6.0% | 41.0% |
+| **3 sad / 1 gun** | **37.4%** | 42.8% | 61.7% | **11.0%** | 52.0% |
+| 2 sad / 2 gun | 28.8% | 40.1% | 58.3% | 22.5% | 67.5% |
+| 1 sad / 3 gun | 20.7% | 36.7% | 43.3% | 34.0% | 74.0% |
+| 0 sad / 4 gun | 17.9% | 30.3% | 26.7% | **49.0%** | 74.0% |
+
+3/1 is the best exchange rate on the curve. Past 2/2 the honest route stops
+losing and DESIGN.md §2's central test goes with it.
+
+**Two things this does NOT fix, and both were measured:**
+
+- **Act II barely moves** (43.1% -> 42.8%, and only 30% at the extreme). Act II
+  dead hands are a different problem with a different cause. No opening-deck
+  tuning reaches them, so do not aim there again.
+- **A card with an effect is not an attack.** The control arm swapped a
+  Saddlebag for a Canteen instead of a Six-Gun: nearly identical Act I, but Act
+  II *worse* (45.9%) and escalation worse (70%). Twice in one run the same
+  answer — the blank-card theory on its own is wrong, it is the missing attack.
+
+Escalation tracks dead hands almost exactly (75 -> 62 -> 58 -> 43 -> 27%). The
+pace engine is not independently runaway; it runs away precisely when the posse
+cannot shoot.
+
+`starterGuns` and `padMix` are TUNING axes, and `setup` builds the deck from
+them rather than from a literal — the Six-Guns are spliced in at their original
+position so the default list is byte-identical and old seeds still reproduce.
+
+### Ruled: the Saddlebag stays blank
+
+Tested and rejected. "Look at the top card of your deck, you may discard it",
+200 games an arm:
+
+| arm | played% | dead Act I | dead Act II | scars@Turn | buys/game | Balanced |
+|---|---|---|---|---|---|---|
+| blank, Grit 1 (kept) | 0.0% | 39.3% | 43.5% | 0.3 | 32.5 | 57.0% |
+| look 1, Grit 1 | **12.8%** | 35.9% | **48.6%** | 0.3 | 31.5 | 44.0% |
+| look 1, Grit 0 | 100% | — | — | — | **6.7** | **0.0%** |
+| look 2, Grit 1 | 12.8% | 35.9% | 48.6% | 0.3 | 31.5 | 46.5% |
+
+Played 12.8% of the time — under the 15% bar for "a real choice", so the card
+is still functionally blank. It buys 3.4 points of Act I dead hands and gives
+back 5.1 in Act II. **Grit 0 is not a trade, it is a collapse**: the Saddlebag
+is a third of the deck's money, buys fall 32.5 -> 6.7, almost no game reaches
+Act II, and every policy wins 0%. The dashes are empty samples, not good news.
+
+**The `sift` op has been deleted** rather than left inert.
+
+Two things worth keeping from the run:
+
+- **Look-1 and look-2 were byte-identical**, because the bot's policy was
+  "discard a Scar, keep anything else" and Scars average 0.3 per player at the
+  Turning. Seeing two cards almost never surfaces a second Scar. Any future
+  version of this experiment is measuring the POLICY at least as much as the
+  card, and those numbers are a floor rather than an estimate.
+- **No damage to the corruption economy**, which was the thing to watch: Scars
+  at the Turning were 0.3 in every viable arm, identical to control. A one-card
+  look cannot dodge a Scar because Scars are too rare to find.
+
+**Third independent confirmation that a card with an effect is not an attack**
+(after the Canteen padding arm and the Canteen substitution arm). The
+blank-card theory is wrong on its own; dead hands are attack density.
+
 ## Two rules that hold the corruption economy together
 
 Some Fevered Signs (Last Words, Night Watch, Salt Line, the Coyote) carry a
@@ -756,23 +838,36 @@ acknowledgement: see "Reaction windows: not needed" — waiting on the table cos
 pace against the 40-minute target, and how long someone spends reading a Dusk is
 a tell in a game where one player is hiding something.
 
-**Bots are floored at one action per 5s** (`Hub`'s `minGapMs`, overridable with
-`LONG_NOON_BOT_GAP`). This is a rate limit sitting on top of the pacing model
-below, not a replacement for it — a Dusk or the Turning still costs more. It is
-the obvious lever for a game-speed control.
+**Bots are floored at one action per 1.5s** (`Hub`'s `minGapMs`, overridable
+with `LONG_NOON_BOT_GAP`) — the slowest a bot should ever act. A Dusk or the
+Turning still costs more; the floor only raises the bottom.
 
-It is not free. Measured over full games, bot time alone:
+**At 1500 the floor barely binds any more.** `botDelayMs` is also 1500, so an
+ordinary one-sentence action costs the same either way and the per-sentence
+model underneath is what you actually feel. That is the intended end state: the
+floor was a blunt instrument added when the measured pacing alone read too fast,
+and it is a backstop now rather than the tempo.
 
-| Table | Bot actions | Paced only | With the 5s floor |
-|---|---|---|---|
-| 1 human + 2 bots | 210 | 6.5 min | **18.8 min** |
-| 1 human + 3 bots | 264 | 6.9 min | 22.9 min |
-| 1 human + 4 bots | 300 | 7.4 min | 26.0 min |
+It was 5000 for a long time, and it was expensive. Bot time alone, at the
+measured action counts:
 
-Against DESIGN.md's 40-minute target that is most of the session at four or five
-players, before anyone human has thought about anything. If table time starts
-mattering again, this number is the first place to look, and the measurements
-above are the baseline to compare against.
+| Table | Bot actions | Paced only | At the old 5s floor | **At 1.5s** |
+|---|---|---|---|---|
+| 1 human + 2 bots | 210 | 6.5 min | 18.8 min | **~6.5 min** |
+| 1 human + 3 bots | 264 | 6.9 min | 22.9 min | **~6.9 min** |
+| 1 human + 4 bots | 300 | 7.4 min | 26.0 min | **~7.4 min** |
+
+The action counts and the first two columns are measured. The last converges on
+"paced only" precisely because the floor has stopped binding — arithmetic rather
+than a fresh run, but the mechanism is the reason and not a coincidence. That is
+roughly **twelve minutes** given back at three players against DESIGN.md's
+40-minute target.
+
+**Watch the animation holds if you touch `SPEED`.** The multiplier scales the
+WHOLE computed pause, `duskMs` (2400) and `turningMs` (6600) included — so at
+`fastest` a Turning pause is about a second against a 3.1s client animation. The
+rule further down is that a client hold longer than the server's pause makes the
+lag accumulate all game. Nobody has re-measured that at the new settings.
 
 **Bots are paced per sentence, not per action** (`server/pace.ts`,
 `Hub.pauseAfter`). A flat delay was wrong in both directions at once: 72 of 214
@@ -897,6 +992,70 @@ thing the Marked player could buy: their secret aim is scored at that exact
 instant. There is deliberately no way back from the Turning either — Signs are
 permanently Fevered and the Vessel is named — so "return to Act I" is a new deal,
 not an undo.
+
+## Game speed, and the only control with an owner
+
+`Speed` is `'normal' | 'fast' | 'fastest'`, multiplying **all four** of `Hub`'s
+pacing knobs by 1 / 0.45 / 0.15 — `botDelayMs`, `readMs`, `quietMs` and
+`minGapMs`. One multiplier rather than a table per speed, so the SHAPE of the
+pacing survives: a Dusk still costs more than a quiet action. **`minGapMs`
+scales too** — 1500ms at `normal`, so 675ms at `fast` and 225ms at `fastest`.
+
+**The animation holds are NOT scaled.** `duskMs` (2400) and `turningMs` (6600)
+are added in `holdFor` AFTER the multiplier and never move. Speed is how fast
+bots think, not how fast the sun goes down — scaling them left about a second
+for a three-second piece at `fastest`, which does not make the game quicker, it
+makes the client's own hold outlast the server's pause and the lag accumulate
+for the rest of the game.
+
+### Nothing may be committed during a Dusk or the Turning
+
+`Room.lockedUntil`. Both are full-screen animations the whole table watches, and
+a move landing behind one is a move nobody saw.
+
+- **Set in `deliver`**, which is the single place events reach the table, so a
+  Dusk brought on by a bot and one brought on by a human lock for the same
+  length. `command` used to build its envelopes inline — a second copy of
+  `deliver` — which meant a human ending their turn into a Dusk skipped the
+  lock entirely, and that is the likeliest way to cause one.
+- **Both gates on the bot side**: `max(nextBotAt, lockedUntil)`. The pacing
+  clock knows nothing about a Dusk somebody else triggered.
+- **Refused, not queued.** A move accepted now and applied in three seconds is
+  a move made against a board the player could not see, and in a hidden-role
+  game the timing of a click is itself a tell.
+- `holdFor` feeds the bot pause AND the lock, so the two cannot drift.
+
+It affects **bot pacing only**. A person's turn takes as long as it takes.
+
+**It is room state, not a client preference.** The pauses happen on the server,
+so a client could only ever delay what it already has, never speed it up — and
+it has to survive a reconnect and be the same for everyone watching the same
+bots.
+
+### There is a host now, and it is a narrowing rather than a reversal
+
+`Room.host` is **the first human to take a chair** — not whoever sent `create`,
+which opens chairs and seats nobody, so that would hand the room to someone who
+might never sit in it.
+
+The ruling that anyone seated may move a chair still stands, and `begin` is
+still open to everyone. The host owns **pacing only**: the one setting that is
+table-wide, continuous, and not worth interrupting a game to negotiate. A speed
+control needing three people to agree is worse than no speed control.
+
+**The role never goes vacant while anybody is still here.** `rehost` hands it to
+the next connected human in seat order on disconnect — silently, no vote. A room
+whose host has left is a room nobody can change the speed of, which is the
+failure mode of every host-with-exclusive-rights design.
+
+**`speed` is its own outbound message, not a re-sent `table`.** The client treats
+any `table` as "we are in the waiting room" (`setTable` is what draws the lobby),
+so broadcasting one mid-game would eject the whole table from the board. It
+carries the two fields that moved and disturbs nothing else. `you: boolean` says
+whether THAT seat owns the control, so no client has to compare ids.
+
+The client renders the picker only for the host — **absent rather than disabled**,
+because a greyed button invites a conversation about why it is grey.
 
 ## The table exists before the game does
 

@@ -22,6 +22,7 @@ import dynamiteBlast from './components/audio/dynamite-blast.mp3';
 import dynamiteFevered from './components/audio/dynamite-fevered.mp3';
 import lanternC from './components/audio/lantern-c.mp3';
 import winchesterA from './components/audio/winchester-a.mp3';
+import doomBoom from './components/audio/doom-boom-big.mp3';
 
 interface Clip {
   src: string;
@@ -118,6 +119,20 @@ const DEAL_HAND = { src: dealHand, gain: 0.55 };
  * Quieter than the deal. A discard is the end of something and nobody is
  * waiting on it; a draw is the thing the player is watching for.
  */
+/**
+ * Doom climbing.
+ *
+ * ONCE per batch, however many points arrived and from however many sources.
+ * A Dusk with four unresolved Threats emits four DOOM events, and a Whisper
+ * fill adds a fifth on top — five booms in a row is a machine gun, not dread.
+ * The narrator already sums Doom per beat for the same reason.
+ *
+ * No near/far: Doom is not anybody's, so there is no "somebody else's Doom" to
+ * mix quieter. It is the loudest thing in the game because it is the only one
+ * that is happening to everybody.
+ */
+const DOOM = { src: doomBoom, gain: 0.9 };
+
 const DISCARD_HAND = { src: discardA, gain: 0.45 };
 const DISCARD_ONE = { src: discardOneA, gain: 0.4 };
 
@@ -213,7 +228,9 @@ export function createCardSounds(): CardSounds {
 
   return {
     hear(events, seat, level, handSize = 0) {
+      let doom = 0;
       for (const e of events) {
+        if (e.t === 'DOOM') { doom += e.delta; continue; }
         if (e.t === 'DREW') {
           const near = e.player === seat;
           // Defended, because the failure mode is silence and silence is what
@@ -262,6 +279,16 @@ export function createCardSounds(): CardSounds {
           aimed = null;
         }
       }
+      /*
+        Doom, summed. Fired after the loop rather than inside it so a batch is
+        one boom — see the note on DOOM above.
+
+        `> 0` rather than `!== 0`: nothing subtracts from Doom today, but a
+        reset would be a different sound rather than a quieter version of this
+        one, and firing the boom on a REDUCTION would be actively misleading.
+      */
+      if (doom > 0) fireClip(DOOM, level, true);
+
       // Still in the air at the end of the batch? Only a pending choice
       // explains that. Anything else means it fizzled — no legal target, or
       // the damage was prevented — and a shot left armed would go off later on

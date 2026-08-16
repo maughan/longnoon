@@ -17,6 +17,7 @@ import type {
   PlayerId,
 } from "../../engine/state";
 import type { ClientState } from "../../engine/view";
+import type { Speed } from "../../server/protocol";
 import { useNet, roomFor, type Net } from "./net";
 import { GLOSSARY, Rules, Term, Tooltips } from "./glossary";
 import { describeOps, cardKeywords, thirdLine } from "./cardText";
@@ -598,7 +599,9 @@ function Game({ net }: { net: Net }) {
       {showSettings && (
         <SettingsPanel
           s={sound}
-          handSize={v.handSize}
+          speed={net.speed}
+          isHost={net.isHost}
+          onSpeed={(value) => net.send({ t: "speed", value })}
           onClose={() => setSettings(false)}
         />
       )}
@@ -1377,23 +1380,50 @@ function MarketPanel({
   onClose: () => void;
   onZoom: (def: Card, fevered: boolean) => void;
 }) {
-  const [tab, setTab] = useState<"provisions" | "signs">("provisions");
-  const ids =
-    tab === "provisions" ? v.provisionRow.map((ci) => ci.cardId) : SIGN_IDS;
+  /*
+    The Provision shelf disappears once it is empty, not once Act II begins.
+
+    Act II is the obvious test and it is wrong: nothing gates Provisions on the
+    act. The deck is finite and has usually run dry by the Turning, but
+    "usually" is not "always" — measured over 60 games, the row still holds a
+    card in 0.4% of Act II decisions and one is genuinely BUYABLE in 0.1%.
+    Hiding the tab by act would hide a purchase the rules are offering, which
+    is the client deciding what is legal (tech-spec.md §4).
+
+    Emptiness is the same information without the lie, and it is right in both
+    acts for the same reason.
+  */
+  const provisions = v.provisionRow.map((ci) => ci.cardId);
+  const shopping = provisions.length > 0;
+  const [tab, setTab] = useState<"provisions" | "signs">(
+    shopping ? "provisions" : "signs",
+  );
+  // A tab that vanishes underneath you leaves the shelf blank rather than
+  // switching; pin it to Signs whenever the other shelf is gone.
+  const showing = shopping ? tab : "signs";
+  /*
+    Signs are shown as they will ARRIVE. Buying one in Act II gives you the
+    Fevered copy — `BUY` does `newInstance(id, s.act === 'mythos')` — so the
+    clean face here was advertising a card the shop does not sell.
+  */
+  const fevered = v.act === "mythos";
+  const ids = showing === "provisions" ? provisions : SIGN_IDS;
   return (
     <div className="sheet" onClick={onClose}>
       <div className="sheet-inner" onClick={(e) => e.stopPropagation()}>
         <div className="sheet-head">
           <h1>The market</h1>
+          {shopping && (
+            <button
+              className={showing === "provisions" ? "primary" : ""}
+              onClick={() => setTab("provisions")}
+            >
+              <Icon name="kit" size={14} />{" "}
+              <Term k="provisions">Provisions</Term> · {v.provisionsLeft} left
+            </button>
+          )}
           <button
-            className={tab === "provisions" ? "primary" : ""}
-            onClick={() => setTab("provisions")}
-          >
-            <Icon name="kit" size={14} /> <Term k="provisions">Provisions</Term>{" "}
-            · {v.provisionsLeft} left
-          </button>
-          <button
-            className={tab === "signs" ? "primary" : ""}
+            className={showing === "signs" ? "primary" : ""}
             onClick={() => setTab("signs")}
           >
             <Icon name="sign" size={14} /> <Term k="signs">Signs</Term> · always
@@ -1412,12 +1442,14 @@ function MarketPanel({
               <PlayCard
                 key={`${id}-${i}`}
                 def={card(id)}
-                fevered={false}
+                fevered={fevered && card(id).type === "sign"}
                 dim={!buy}
                 actions={buy ? [{ cmd: buy, label: "Buy" }] : []}
                 onPlay={onPlay}
                 onPick={buy ? () => onPlay(buy) : undefined}
-                onZoom={() => onZoom(card(id), false)}
+                onZoom={() =>
+                  onZoom(card(id), fevered && card(id).type === "sign")
+                }
                 market
               />
             );
@@ -2458,25 +2490,22 @@ function Cog() {
  */
 function SettingsPanel({
   s,
-  handSize: fromView,
+  speed,
+  isHost,
+  onSpeed,
   onClose,
 }: {
   s: SoundSettings;
-  /** From the view when there is one. */
-  handSize: number | undefined;
+  speed: Speed;
+  /** Only the host sees the pacing control — see `server/protocol.ts`. */
+  isHost: boolean;
+  onSpeed: (value: Speed) => void;
   onClose: () => void;
 }) {
-  /**
-   * A sound test must not depend on the server.
-   *
-   * It did, and a server that had not yet learned to send `handSize` made the
-   * "Deal a hand" button silent — the one button whose whole job is telling you
-   * whether silence means broken. The content is bundled with the client, so
-   * the fallback is always there.
-   */
-  const handSize = fromView ?? TUNING.handSize;
+  // The effects slider still plays a coin as you let go of it — a level is
+  // easier to judge by ear than by number. The row of "hear one" buttons that
+  // used to sit below is gone.
   const demo = useRef<CoinPool | null>(null);
-  const demoCards = useRef<CardSounds | null>(null);
   const level = s.muted ? 0 : s.effects;
 
   const tryIt = () => {
@@ -2485,75 +2514,7 @@ function SettingsPanel({
     demo.current.play(level);
   };
 
-  /**
-   * Hear one effect on demand.
-   *
-   * Each of these fires the SAME path the game uses — the card sounds are
-   * driven by feeding `hear` the events the engine would emit, not by calling
-   * a clip directly. A button that plays the file regardless would happily
-   * sound while the wiring behind it was broken, which is the one thing it is
-   * here to detect.
-   */
-  const hear = (events: GameEvent[]) => {
-    if (level <= 0) return;
-    demoCards.current ??= createCardSounds();
-    demoCards.current.hear(events, "p0", level, handSize);
-  };
 
-  const EFFECTS: [string, () => void][] = [
-    ["Coin", tryIt],
-    [
-      "Sign bought",
-      () => {
-        if (level <= 0) return;
-        demo.current ??= createCoinPool();
-        demo.current.sign(level);
-      },
-    ],
-    ["Shuffle", () => hear([{ t: "RESHUFFLED", player: "p0", n: 9 }])],
-    ["Draw", () => hear([{ t: "DREW", player: "p0", n: 1 }])],
-    ["Deal a hand", () => hear([{ t: "DREW", player: "p0", n: handSize }])],
-    [
-      "Discard a card",
-      () => hear([{ t: "DISCARDED", player: "p0", n: 1, hand: false }]),
-    ],
-    [
-      "Discard a hand",
-      () => hear([{ t: "DISCARDED", player: "p0", n: handSize, hand: true }]),
-    ],
-    [
-      "Six-Gun",
-      () =>
-        hear([
-          { t: "PLAYED", player: "p0", cardId: "six-gun", fevered: false },
-          { t: "THREAT_DAMAGED", slot: 0, amount: 1 },
-        ]),
-    ],
-    [
-      "Winchester",
-      () =>
-        hear([
-          { t: "PLAYED", player: "p0", cardId: "winchester", fevered: false },
-          { t: "THREAT_DAMAGED", slot: 0, amount: 2 },
-        ]),
-    ],
-    [
-      "Lantern Oil",
-      () =>
-        hear([
-          { t: "PLAYED", player: "p0", cardId: "lantern-oil", fevered: false },
-          { t: "THREAT_DAMAGED", slot: 0, amount: 2 },
-        ]),
-    ],
-    [
-      "Dynamite",
-      () =>
-        hear([
-          { t: "PLAYED", player: "p0", cardId: "dynamite", fevered: false },
-          { t: "THREAT_CLEARED", slot: 0, cardId: "barons-men" },
-        ]),
-    ],
-  ];
   return (
     <div className="sheet" onClick={onClose}>
       <div className="sheet-inner narrow" onClick={(e) => e.stopPropagation()}>
@@ -2595,20 +2556,36 @@ function SettingsPanel({
             onSettle={tryIt}
           />
 
-          <div className="hearit">
-            <span className="name">Hear one</span>
-            <div className="row">
-              {EFFECTS.map(([label, play]) => (
-                <button key={label} disabled={level <= 0} onClick={play}>
-                  {label}
-                </button>
-              ))}
+          {/*
+            Host only, and it is the one control in the game with an owner.
+            Pacing is table-wide and continuous — a speed that needed three
+            people to agree would be worse than no speed control at all. Chairs
+            and `begin` stay open to everyone.
+
+            Absent rather than disabled for the rest of the table: a greyed
+            button invites a conversation about why it is grey.
+          */}
+          {isHost && (
+            <div className="speedpick">
+              <span className="name">Game speed</span>
+              <div className="row">
+                {(["normal", "fast", "fastest"] as Speed[]).map((v) => (
+                  <button
+                    key={v}
+                    className={v === speed ? "primary" : ""}
+                    onClick={() => onSpeed(v)}
+                  >
+                    {v}
+                  </button>
+                ))}
+              </div>
+              <p className="hint">
+                How quickly the bots take their turns. Nothing else changes —
+                a person's turn takes as long as it takes.
+              </p>
             </div>
-            <p className="hint">
-              Each plays through the same path the game uses, so a silent button
-              means the wiring is broken and not just the volume.
-            </p>
-          </div>
+          )}
+
         </div>
       </div>
     </div>
