@@ -1123,3 +1123,48 @@ describe('prependOps does not disturb the rest of the schema', () => {
     expect(opsFor(c, false).map((o) => o.op)).toEqual(['damage', 'draw']);
   });
 });
+
+describe('Menace does not bite the hand that summons it', () => {
+  it('never aims at the Vessel, however many Signs it holds', () => {
+    /*
+      A Threat is the Old One's own force. Menace aims at whoever holds most
+      Signs, and the Vessel keeps every Sign it bought — so the targeting rule
+      pointed it at itself by default: 25.6% of Act II Menace and 26% of all
+      Act II card loss, measured, before this.
+
+      Stacked here rather than left to chance: the Vessel is given far more
+      Signs than anybody else, so `mostSigns` would pick it if it could.
+    */
+    const { s, vessel } = actII();
+    for (let i = 0; i < 8; i++) {
+      s.players[vessel].deck.push(newInstance(s, 'colt', true));
+    }
+    s.street[0] = threat(s, 'barons-men');
+    s.activePlayer = s.turnOrder[s.turnOrder.length - 1]!;
+    s.actionsLeft = 0;
+
+    const r = apply(s, s.activePlayer, { t: 'END_TURN' });
+    const hits = r.events.filter((e) => e.t === 'MENACE');
+    expect(hits.length, 'no Menace resolved').toBeGreaterThan(0);
+    for (const h of hits) {
+      expect((h as { player: string }).player, 'Menace hit the Vessel').not.toBe(vessel);
+    }
+    // And it did land on somebody. Read off the PRE-state, because a hard
+    // enough hit turns a posse player into a Revenant on the way through.
+    for (const h of hits) {
+      expect(s.players[(h as { player: string }).player].status).toBe('posse');
+    }
+  });
+
+  it('resolves to nothing rather than throwing when only the Vessel is left', () => {
+    // `pickExtreme` on an empty list used to be the failure mode here.
+    const { s, vessel } = actII();
+    for (const id of s.turnOrder) {
+      if (id !== vessel) s.players[id].status = 'gone';
+    }
+    s.street[0] = threat(s, 'barons-men');
+    s.activePlayer = vessel;
+    s.actionsLeft = 0;
+    expect(() => apply(s, vessel, { t: 'END_TURN' })).not.toThrow();
+  });
+});

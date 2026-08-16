@@ -7,6 +7,7 @@ import { ALL_CARDS, SIGN_IDS, card } from '../content/cards';
 import { opsFor } from '../engine/effects';
 import { describeOps, cardKeywords, thirdLine } from '../client/src/cardText';
 import { GLOSSARY } from '../client/src/glossaryData';
+import { iconForCard, iconForStatus } from '../client/src/icons';
 
 describe('rules text', () => {
   it('describes every op the content actually uses', () => {
@@ -191,5 +192,27 @@ describe('what "trash" actually does', () => {
     expect(t.long).toMatch(/leftmost/);
     expect(t.long).toMatch(/top of your shuffled deck/);
     expect(t.long).toMatch(/boneyard/);
+  });
+});
+
+describe('what a Vessel card is marked with', () => {
+  it('wears the Vessel glyph, not the Provision one', () => {
+    // Without a case of its own, `iconForCard` falls through to `kit` — so
+    // these printed the Provision mark, the one family they can never be.
+    for (const c of ALL_CARDS.filter((x) => x.type === 'vessel')) {
+      expect(iconForCard(c), c.id).toBe('vessel');
+    }
+  });
+
+  it('is the same glyph the Vessel seat wears', () => {
+    // One entity, one mark. A second glyph would imply a second thing to learn.
+    expect(iconForCard(card('your-name'))).toBe(iconForStatus('vessel'));
+  });
+
+  it('leaves every other family on its own mark', () => {
+    expect(iconForCard(card('canteen'))).toBe('kit');
+    expect(iconForCard(card('colt'))).toBe('sign');
+    expect(iconForCard(card('colt'), true)).toBe('fevered');
+    expect(iconForCard(card('scar'))).toBe('scar');
   });
 });

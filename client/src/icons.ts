@@ -18,6 +18,18 @@ import type { IconName } from './components/iconsgen';
 /** A card, by what it is. Trouble and Mythos are known by what they do to you. */
 export function iconForCard(def: Card, fevered = false): IconName {
   if (def.type === 'sign') return fevered ? 'fevered' : 'sign';
+  /*
+    The Vessel's own deck, marked with the same glyph as the Vessel's seat.
+
+    Reused rather than drawn anew, and that is the point rather than a saving:
+    the Vessel is one entity, so the tag on the player and the mark on their
+    cards should be the same thing. A second glyph would imply a second thing
+    to learn, which is what the whole Vessel/Old One rename was about.
+
+    Without this case these fell through to `kit` and printed the PROVISION
+    mark — the one family they can never be.
+  */
+  if (def.type === 'vessel') return 'vessel';
   if (def.type === 'omen') return 'omen';
   if (def.type === 'trouble' || def.type === 'mythos') return 'menace';
   if (def.type === 'scar') return 'scar';

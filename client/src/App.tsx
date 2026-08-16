@@ -6,7 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { card, SIGN_IDS, TUNING } from "../../content/cards";
+import { ALL_CARDS, card, SIGN_IDS, TUNING } from "../../content/cards";
 import { opsFor, effectiveClear, effectiveMenace } from "../../engine/effects";
 import type {
   Card,
@@ -505,17 +505,48 @@ function Game({ net }: { net: Net }) {
         <div className="choice">
           <h2>{v.pending.prompt}</h2>
           {offscreen.length > 0 ? (
-            <div className="opts">
-              {offscreen.map((o) => (
-                <button
-                  key={o.key}
-                  className="primary"
-                  onClick={() => resolve(o.key)}
-                >
-                  {o.label}
-                </button>
-              ))}
-            </div>
+            /*
+              Cards get drawn as cards.
+
+              A GIFT, FREELY GIVEN asks which Sign, and a column of twelve
+              buttons reading "The Colt That Doesn't Miss" asks the player to
+              remember what each one does. Every other surface in the game —
+              hand, market, Street, the piles — shows the face; a prompt is the
+              one place that did not.
+
+              Detected by whether the keys ARE card ids rather than by naming
+              the op, so any future prompt that offers cards gets this for
+              free and no list has to be kept in step.
+            */
+            asCards(offscreen) ? (
+              <div className="opts cards">
+                {offscreen.map((o) => (
+                  <PlayCard
+                    key={o.key}
+                    def={card(o.key)}
+                    fevered={v.act === "mythos"}
+                    actions={[]}
+                    onPlay={() => resolve(o.key)}
+                    onPick={() => resolve(o.key)}
+                    onZoom={() => setZoom({
+                      def: card(o.key), fevered: v.act === "mythos",
+                    })}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="opts">
+                {offscreen.map((o) => (
+                  <button
+                    key={o.key}
+                    className="primary"
+                    onClick={() => resolve(o.key)}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            )
           ) : (
             <p className="muted">Click what you mean.</p>
           )}
@@ -1646,11 +1677,6 @@ function SelfSeat({
           </span>
         )}
         {me.status !== "posse" && <StatusChip status={me.status} />}
-        {v.vessel === me.id && (
-          <span className="chip sign">
-            <Icon name="vessel" size={12} /> the Vessel
-          </span>
-        )}
       </div>
       <div className="vitals">
         <span
@@ -1835,16 +1861,19 @@ function Hand({
           )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <Counter
-            drag={drag}
-            onSell={(cmd) => {
-              onPlay(cmd);
-              onDrag(null);
-            }}
-            onOpen={onMarket}
-            grit={me.grit}
-            buyable={buyable}
-          />
+          {me.status !== "vessel" && (
+            <Counter
+              drag={drag}
+              onSell={(cmd) => {
+                onPlay(cmd);
+                onDrag(null);
+              }}
+              onOpen={onMarket}
+              grit={me.grit}
+              buyable={buyable}
+            />
+          )}
+
           <DiscardPile
             cards={me.discard}
             omenMenace={v.omenMenace}
@@ -2514,7 +2543,6 @@ function SettingsPanel({
     demo.current.play(level);
   };
 
-
   return (
     <div className="sheet" onClick={onClose}>
       <div className="sheet-inner narrow" onClick={(e) => e.stopPropagation()}>
@@ -2580,12 +2608,11 @@ function SettingsPanel({
                 ))}
               </div>
               <p className="hint">
-                How quickly the bots take their turns. Nothing else changes —
-                a person's turn takes as long as it takes.
+                How quickly the bots take their turns. Nothing else changes — a
+                person's turn takes as long as it takes.
               </p>
             </div>
           )}
-
         </div>
       </div>
     </div>
@@ -2714,6 +2741,19 @@ function faceOf(
       ? effectiveMenace(opts.slot, opts.omenMenace ?? 0)
       : def.menace,
   };
+}
+
+/**
+ * Are these choice options cards, rather than players or slots?
+ *
+ * Asked of the KEYS, not of the op that raised the prompt. A list keyed by op
+ * would need extending every time a card offers a card, and would be wrong the
+ * first time somebody forgot.
+ */
+const CARD_IDS = new Set(ALL_CARDS.map((c) => c.id));
+
+function asCards(opts: { key: string }[]): boolean {
+  return opts.length > 0 && opts.every((o) => CARD_IDS.has(o.key));
 }
 
 const FAMILY: Record<Card["type"], string> = {

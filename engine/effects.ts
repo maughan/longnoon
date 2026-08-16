@@ -660,6 +660,112 @@ export function assertWhisperInvariants(s: GameState): void {
   }
 }
 
+
+// ---------------------------------------------------------------------------
+// The Street: escalation, overflow, and Menace.
+//
+// These lived in reducer.ts, which meant the `summon` op could not reach them
+// and wrote its own, simpler arrival — one that gave up on a full Street. Two
+// arrival rules is one too many; they are effects, so they live here.
+// ---------------------------------------------------------------------------
+
+export function escalate(s: GameState, slot: number, ev: GameEvent[]): void {
+  const sl = s.street[slot];
+  if (!sl || s.tuning.escalationPerRound <= 0) return;
+  // Something that cannot be cleared cannot be answered, so growing it is a
+  // one-way ratchet on the table. See Tuning.escalateUncleanable.
+  if (!s.tuning.escalateUncleanable && effectiveClear(sl) === undefined) return;
+  sl.escalation += s.tuning.escalationPerRound;
+  ev.push({
+    t: 'ESCALATED',
+    slot,
+    cardId: sl.instance.cardId,
+    clear: effectiveClear(sl) ?? null,
+    menace: effectiveMenace(sl, s.tuning.omenMenace),
+  });
+}
+
+export function oldestSlot(s: GameState): number {
+  let best = 0, oldest = Infinity;
+  s.street.forEach((sl, i) => {
+    if (sl && sl.enteredRound < oldest) { oldest = sl.enteredRound; best = i; }
+  });
+  return best;
+}
+
+export function resolveMenace(s: GameState, slot: number, ev: GameEvent[]): void {
+  const sl = s.street[slot];
+  if (!sl) return;
+  const def = card(sl.instance.cardId);
+  if (sl.menaceCancelled) return; // Night Watch is standing over this one
+  const menace = effectiveMenace(sl, s.tuning.omenMenace);
+  if (menace <= 0) return;
+  /*
+    The posse, and only the posse.
+
+    `livingPlayers` includes the Vessel — correct for turn order and for the
+    win check, wrong here: a Threat is the Old One's own force, and Menace is
+    it reaching for the table. It has no reason to bite the seat it is using.
+
+    Measured before this: 25.6% of Act II Menace landed on the Vessel and 26%
+    of all cards trashed in Act II were the Vessel's own. Not an edge case —
+    Menace aims at whoever holds most Signs, and the Vessel keeps every Sign it
+    bought (5.7 on average), so the targeting rule pointed it at itself by
+    default.
+  */
+  const targets = livingPlayers(s).filter((id) => s.players[id].status === 'posse');
+  if (!targets.length) return;
+
+  // Menace lands on whoever holds the most Signs — corruption draws attention —
+  // unless the card names someone else. Ties break at random, never by seat: a
+  // first-match rule sends every point of damage to the same player all game
+  // whenever Signs are level, and cascades it down the table.
+  const aim = def.menaceTarget ?? 'mostSigns';
+  const victims =
+    aim === 'all' ? targets
+    : aim === 'fewestCards'
+      ? [pickExtreme(s, targets, (id) => deckSize(s, id), false)!]
+      : [pickExtreme(s, targets, (id) => signsHeld(s, id), true)!];
+
+  for (const victim of victims) {
+    // The wound deepens with the corruption that drew it.
+    const extra = Math.floor(signsHeld(s, victim) * s.tuning.menacePerSign);
+    const total = menace * s.tuning.damagePerHit + extra;
+    ev.push({ t: 'MENACE', slot, cardId: def.id, player: victim, amount: total });
+    damagePlayer(s, victim, total, ev);
+  }
+}
+
+/**
+ * A Threat arrives. The ONE arrival rule, used by Dawn and by SOMETHING COMES
+ * UP THE STREET alike.
+ *
+ * On a full Street this overflows rather than fizzling: the oldest Threat
+ * takes its Menace out on the table and stays, one step worse, and the
+ * arriving card is retired. Getting swamped should compound — that is why
+ * overflow stopped discarding — and a card that does nothing when the Street
+ * is full is a card the Vessel simply holds.
+ */
+export function enterStreet(
+  s: GameState, entering: CardInstance, ev: GameEvent[],
+): void {
+  const slot = s.street.findIndex((x) => x === null);
+  if (slot === -1) {
+    const old = oldestSlot(s);
+    resolveMenace(s, old, ev);
+    escalate(s, old, ev);
+    // Retired rather than dropped, so the recycle economy still sees it.
+    retire(s, entering);
+    return;
+  }
+  s.street[slot] = {
+    instance: entering, damage: 0, turned: false,
+    enteredRound: s.round, escalation: 0,
+  };
+  ev.push({ t: 'THREAT_ENTERED', slot, cardId: entering.cardId });
+  onThreatEntered(s, entering.cardId, ev);
+}
+
 export function execOp(
   s: GameState, op: Op, controller: PlayerId, ev: GameEvent[], chosen?: string,
 ): void {
@@ -761,18 +867,19 @@ export function execOp(
       pushOps(s, opsFor(card(top.cardId), true), pid, top.cardId);
       return;
     }
-    /** SOMETHING COMES UP THE STREET. */
+    /**
+     * SOMETHING COMES UP THE STREET.
+     *
+     * Through the ordinary arrival, so a FULL Street overflows rather than
+     * doing nothing. This used to `return` on a full Street — a legal play
+     * that changed no state, which is the worst kind of card. Overflow is
+     * already the game's answer to a Threat with nowhere to stand, and it is
+     * a real effect: the oldest Threat menaces the table and grows a step.
+     */
     case 'summon': {
-      const slot = s.street.findIndex((sl) => sl === null);
-      if (slot === -1) return;
       const next = s.supply.mythos.shift();
       if (!next) return;
-      s.street[slot] = {
-        instance: next, damage: 0, turned: false,
-        enteredRound: s.round, escalation: 0,
-      };
-      ev.push({ t: 'THREAT_ENTERED', slot, cardId: next.cardId });
-      onThreatEntered(s, next.cardId, ev);
+      enterStreet(s, next, ev);
       return;
     }
     /** NOT THAT ONE. The chosen type is off the table for a round. */

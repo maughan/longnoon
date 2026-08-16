@@ -4,10 +4,9 @@ import type {
 import { card } from '../content/cards';
 import { shuffle } from './rng';
 import {
-  opsFor, pushOps, runQueue, resolveChoice, drawCards, damagePlayer,
+  opsFor, pushOps, runQueue, resolveChoice, drawCards,
   livingPlayers, addWhispers, assertWhisperInvariants, newInstance, signsHeld,
-  onThreatEntered, pickExtreme, deckSize, retire,
-  effectiveClear, effectiveMenace, canPay, clearThreat,
+  canPay, clearThreat, enterStreet, resolveMenace, escalate,
 } from './effects';
 
 /**
@@ -252,27 +251,9 @@ export function beginRound(s: GameState, ev: GameEvent[]): void {
     const entering = drawThreat(s);
     if (!entering) break;
 
-    const slot = s.street.findIndex((x) => x === null);
-    if (slot === -1) {
-      // Overflow. The oldest Threat takes its Menace out on the table and then
-      // STAYS, one step worse. It used to be discarded, which meant a swamped
-      // Street cleaned itself up — the punishment for falling behind was that
-      // the problem went away. Getting swamped should compound.
-      const oldest = oldestSlot(s);
-      resolveMenace(s, oldest, ev);
-      escalate(s, oldest, ev);
-      // The arriving Threat has nowhere to stand, so it never enters. Retired
-      // rather than dropped, so the recycle economy still sees it.
-      retire(s, entering);
-      continue;
-    }
-
-    s.street[slot] = {
-      instance: entering, damage: 0, turned: false,
-      enteredRound: s.round, escalation: 0,
-    };
-    ev.push({ t: 'THREAT_ENTERED', slot, cardId: entering.cardId });
-    onThreatEntered(s, entering.cardId, ev);
+    // One arrival rule, shared with SOMETHING COMES UP THE STREET. Overflow
+    // and all — see `enterStreet`.
+    enterStreet(s, entering, ev);
   }
 
   s.phase = 'day';
@@ -327,29 +308,7 @@ function drawThreat(s: GameState): CardInstance | null {
  * only thing that could move is its Menace, and nothing on the table can ever
  * make it stop.
  */
-function escalate(s: GameState, slot: number, ev: GameEvent[]): void {
-  const sl = s.street[slot];
-  if (!sl || s.tuning.escalationPerRound <= 0) return;
-  // Something that cannot be cleared cannot be answered, so growing it is a
-  // one-way ratchet on the table. See Tuning.escalateUncleanable.
-  if (!s.tuning.escalateUncleanable && effectiveClear(sl) === undefined) return;
-  sl.escalation += s.tuning.escalationPerRound;
-  ev.push({
-    t: 'ESCALATED',
-    slot,
-    cardId: sl.instance.cardId,
-    clear: effectiveClear(sl) ?? null,
-    menace: effectiveMenace(sl, s.tuning.omenMenace),
-  });
-}
 
-function oldestSlot(s: GameState): number {
-  let best = 0, oldest = Infinity;
-  s.street.forEach((sl, i) => {
-    if (sl && sl.enteredRound < oldest) { oldest = sl.enteredRound; best = i; }
-  });
-  return best;
-}
 
 function startTurn(s: GameState, ev: GameEvent[]): void {
   const p = s.players[s.activePlayer];
@@ -431,35 +390,6 @@ function dusk(s: GameState, ev: GameEvent[]): void {
   if (!s.winner) beginRound(s, ev);
 }
 
-function resolveMenace(s: GameState, slot: number, ev: GameEvent[]): void {
-  const sl = s.street[slot];
-  if (!sl) return;
-  const def = card(sl.instance.cardId);
-  if (sl.menaceCancelled) return; // Night Watch is standing over this one
-  const menace = effectiveMenace(sl, s.tuning.omenMenace);
-  if (menace <= 0) return;
-  const targets = livingPlayers(s);
-  if (!targets.length) return;
-
-  // Menace lands on whoever holds the most Signs — corruption draws attention —
-  // unless the card names someone else. Ties break at random, never by seat: a
-  // first-match rule sends every point of damage to the same player all game
-  // whenever Signs are level, and cascades it down the table.
-  const aim = def.menaceTarget ?? 'mostSigns';
-  const victims =
-    aim === 'all' ? targets
-    : aim === 'fewestCards'
-      ? [pickExtreme(s, targets, (id) => deckSize(s, id), false)!]
-      : [pickExtreme(s, targets, (id) => signsHeld(s, id), true)!];
-
-  for (const victim of victims) {
-    // The wound deepens with the corruption that drew it.
-    const extra = Math.floor(signsHeld(s, victim) * s.tuning.menacePerSign);
-    const total = menace * s.tuning.damagePerHit + extra;
-    ev.push({ t: 'MENACE', slot, cardId: def.id, player: victim, amount: total });
-    damagePlayer(s, victim, total, ev);
-  }
-}
 
 // ---------------------------------------------------------------------------
 // The Turning

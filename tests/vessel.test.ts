@@ -367,3 +367,48 @@ describe('the Vessel is never stuck', () => {
     expect(legalCommands(them, posse[0]!).some((c) => c.t === 'SPEND_GRIT')).toBe(true);
   });
 });
+
+describe('SOMETHING COMES UP THE STREET on a full Street', () => {
+  /**
+   * It overflows. It does not fizzle.
+   *
+   * This used to `return` when no slot was free — a legal play that changed no
+   * state, which is the worst kind of card: you spend an action to find out it
+   * did nothing. Overflow is already the game's answer to a Threat with
+   * nowhere to stand, and routing through the same arrival means there is ONE
+   * arrival rule rather than two that can drift.
+   */
+  function fullStreet() {
+    const { s, vessel } = turned();
+    for (let i = 0; i < s.tuning.streetSlots; i++) {
+      s.street[i] = {
+        instance: newInstance(s, 'barons-men'), damage: 0, turned: false,
+        // Descending, so slot 0 is unambiguously the oldest.
+        enteredRound: s.round - (s.tuning.streetSlots - i), escalation: 0,
+      };
+    }
+    acting(s, vessel);
+    return { s, vessel };
+  }
+
+  it('makes the oldest Threat menace the table and grow', () => {
+    const { s, vessel } = fullStreet();
+    const before = s.street[0]!.escalation;
+    const r = playCard(s, vessel, 'up-the-street');
+
+    expect(r.events.some((e) => e.t === 'MENACE'), 'nothing menaced').toBe(true);
+    expect(r.state.street[0]!.escalation, 'the oldest did not grow')
+      .toBeGreaterThan(before);
+    // And nothing new stood up — there was nowhere to stand.
+    expect(r.events.some((e) => e.t === 'THREAT_ENTERED')).toBe(false);
+  });
+
+  it('still fills an empty slot when there is one', () => {
+    const { s, vessel } = fullStreet();
+    s.street[2] = null;
+    const r = playCard(s, vessel, 'up-the-street');
+    expect(r.events.some((e) => e.t === 'THREAT_ENTERED')).toBe(true);
+    expect(r.state.street[2]).not.toBeNull();
+  });
+
+});
