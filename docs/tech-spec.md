@@ -42,7 +42,7 @@ That is the actual reason to go digital. Multiplayer is a distant second. Build 
 ```ts
 type Phase = 'dawn' | 'day' | 'dusk' | 'turning' | 'over';
 type Act   = 'trouble' | 'mythos';
-type Status = 'posse' | 'husk' | 'revenant' | 'oldOne' | 'buried' | 'gone';
+type Status = 'posse' | 'husk' | 'revenant' | 'vessel' | 'buried' | 'gone';
 
 interface GameState {
   seed: string;
@@ -120,7 +120,7 @@ type Command =
   | { t: 'BURY_REVENANT'; target: PlayerId }
   | { t: 'RESOLVE_CHOICE'; choiceId: string; picks: string[] }
   | { t: 'END_TURN' }
-  // Old One only
+  // Vessel only
   | { t: 'CALL'; target: PlayerId }
   | { t: 'SUMMON'; slot: number }
   | { t: 'WHISPER' };
@@ -309,7 +309,7 @@ wants a shorter timer, or straight to a bot without a vote.
 
 - **Simultaneity.** The PnP has players acting in turn order, but Menace resolution at Dusk hits everyone. Decide whether Dusk is a real phase players can respond in, or pure resolution. Pure is simpler and probably right.
 - ~~**Revenant turn position.**~~ **Ruled: original turn order** — a Revenant keeps the seat they had. They therefore act on less information than if they moved last, which is the point: they are not owed a better view for having fallen. Already how the engine behaves.
-- **Old One deck recycling.** "Shrinks by one card each recycle" needs a floor, or the endgame stalls with an empty-handed Old One.
+- **Vessel deck recycling.** "Shrinks by one card each recycle" needs a floor, or the endgame stalls with an empty-handed Vessel.
 - **Undo.** Nearly impossible in hidden-role multiplayer, and with hotseat dropped there is no mode where it is cheap. Recommend: no undo. Decide early, because "just add undo later" is how information leaks get built.
 - **Reaction windows.** Not needed — see CLAUDE.md. All three cards that looked like interrupts are turn-based effects.
 - ~~**Disconnects.**~~ **Ruled** — see §11.

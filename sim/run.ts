@@ -49,9 +49,19 @@ export interface GameResult {
   /** Round the finite Provision deck ran out. Should be ≈5. */
   provisionDryRound: number | null;
   doom: number;
+  /** How many times the Whisper track filled in Act II. Doom's other source. */
+  whisperFills: number;
   vesselDamage: number;
   vesselPolicy: string | null;
   signsBought: number;
+  /** Purchases of the two Street-facing Signs, for the depth-vs-breadth read. */
+  dynamiteBought: number;
+  coltBought: number;
+  /** Omens brought down by Dynamite, and Omens still standing at the end. */
+  omensBanished: number;
+  omensLeft: number;
+  /** Scars per player at the Turning — the Omen mode is a Scar pump. */
+  scarsAtTurning: number | null;
   /** Sign purchases by the seat that ended up as the Vessel. */
   signsBoughtByVessel: number | null;
   steps: number;
@@ -79,9 +89,15 @@ export function runGame(cfg: RunConfig): GameResult {
     firstFallRound: null,
     provisionDryRound: null,
     doom: 0,
+    whisperFills: 0,
     vesselDamage: 0,
     vesselPolicy: null,
     signsBought: 0,
+    dynamiteBought: 0,
+    coltBought: 0,
+    omensBanished: 0,
+    omensLeft: 0,
+    scarsAtTurning: null,
     signsBoughtByVessel: null,
     steps: 0,
   };
@@ -129,6 +145,9 @@ export function runGame(cfg: RunConfig): GameResult {
     result.steps = steps;
     result.rounds = s.round;
     result.doom = s.doom;
+    result.omensLeft = s.street
+      .filter((sl) => sl && card(sl.instance.cardId).type === 'omen').length;
+    result.whisperFills = s.whisperFills;
     result.vesselDamage = s.vesselDamage;
     result.outcome = s.winner ?? 'stall';
     result.signsBought = signsBySeat.reduce((a, b) => a + b, 0);
@@ -161,6 +180,8 @@ function record(
     const held = s.turnOrder.map((id) => signsHeld(s, id));
     r.signsAtTurningAvg = held.reduce((a, b) => a + b, 0) / held.length;
     r.signsAtTurningMax = Math.max(...held);
+    const scars = s.turnOrder.map((id) => s.players[id].scars);
+    r.scarsAtTurning = scars.reduce((a, b) => a + b, 0) / scars.length;
   }
 
   for (const ev of events) {
@@ -168,6 +189,13 @@ function record(
     if (ev.t === 'BOUGHT' && card(ev.cardId).type === 'sign') {
       const seat = Number(ev.player.slice(1));
       signsBySeat[seat] = (signsBySeat[seat] ?? 0) + 1;
+      if (ev.cardId === 'dynamite') r.dynamiteBought += 1;
+      if (ev.cardId === 'colt') r.coltBought += 1;
+    }
+    // An Omen can only leave the Street one way now, so a THREAT_CLEARED on
+    // one is unambiguously a banish.
+    if (ev.t === 'THREAT_CLEARED' && card(ev.cardId).type === 'omen') {
+      r.omensBanished += 1;
     }
   }
 

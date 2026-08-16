@@ -50,6 +50,8 @@ export function duskReport(
   const escalated: DuskLine[] = [];
   const tracks: DuskLine[] = [];
   let whispers = 0;
+  let cycles = 0;
+  let cycleDoom = 0;
   let doom = 0;
   let whisperTotal = 0;
   let doomTotal = 0;
@@ -150,6 +152,17 @@ export function duskReport(
         whisperTotal = e.total;
         break;
 
+      case 'WHISPER_FILL':
+        // Its own line, above the running totals. The bar breaking over is the
+        // single worst thing a Dusk can contain and it must not be a clause on
+        // the end of "Whispers +4".
+        cycles += 1;
+        cycleDoom += e.doom;
+        // The post-reset reading. Without this the summary line below would
+        // print the pre-wrap total and say something like "9 of 8".
+        whisperTotal = e.total;
+        break;
+
       case 'DOOM':
         doom += e.delta;
         doomTotal = e.total;
@@ -160,10 +173,22 @@ export function duskReport(
     }
   }
 
-  if (whispers) {
+  if (cycles) {
     tracks.push({
       icon: 'whisper',
-      text: `Whispers +${whispers} — ${whisperTotal} of ${v.whisperThreshold}`,
+      text: cycles === 1
+        ? `The whispering breaks over — Doom +${cycleDoom}`
+        : `The whispering breaks over ${cycles} times — Doom +${cycleDoom}`,
+      dire: true,
+    });
+  }
+  if (whispers) {
+    // Signed, not always "+". The delta used to print with a hardcoded plus,
+    // which read as "Whispers +-1" the moment anything took some away.
+    const sign = whispers > 0 ? '+' : '';
+    tracks.push({
+      icon: 'whisper',
+      text: `Whispers ${sign}${whispers} — ${whisperTotal} of ${v.whisperThreshold}`,
     });
   }
   if (doom) {

@@ -17,23 +17,28 @@
 //     in a field would empty silently and players would find themselves
 //     unseated with no error anywhere — the worst shape a bug can take.
 
-import { Server, type Connection, type ConnectionContext, type WSMessage } from 'partyserver';
-import { GameRoom, type Update } from '../server/room';
-import { visibleEvents } from '../server/events';
-import { beatsIn, hasDusk, hasTurning } from '../server/pace';
-import type { Inbound, Outbound, TableSeat } from '../server/protocol';
-import type { Command, PlayerId, GameEvent } from '../engine/state';
-import { seatConfigs, type LogEntry, type RoomMeta, type Replay } from './log';
+import {
+  Server,
+  type Connection,
+  type ConnectionContext,
+  type WSMessage,
+} from "partyserver";
+import { GameRoom, type Update } from "../server/room";
+import { visibleEvents } from "../server/events";
+import { beatsIn, hasDusk, hasTurning } from "../server/pace";
+import type { Inbound, Outbound, TableSeat } from "../server/protocol";
+import type { Command, PlayerId, GameEvent } from "../engine/state";
+import { seatConfigs, type LogEntry, type RoomMeta, type Replay } from "./log";
 
 /** DESIGN.md §1: three to five at a table. */
 const MIN_SEATS = 3;
 const MAX_SEATS = 5;
 
-const BOT_NAMES = ['Ada', 'Bell', 'Cole', 'Dell', 'Etta'];
+const BOT_NAMES = ["Ada", "Bell", "Cole", "Dell", "Etta"];
 
 /** Storage keys. Two of them, and neither is a serialised GameState. */
-const K_META = 'meta';
-const K_LOG = 'log';
+const K_META = "meta";
+const K_LOG = "log";
 
 /**
  * What a connection remembers about itself.
@@ -60,7 +65,7 @@ const RATE_WINDOW_MS = 10_000;
 const RATE_MAX_MESSAGES = 120;
 
 /** Bot pacing, ported from `Hub`. See CLAUDE.md — paid per sentence, not action. */
-const BOT_MIN_GAP_MS = 5000;
+const BOT_MIN_GAP_MS = 3400;
 const BOT_BASE_MS = 1500;
 const BOT_READ_MS = 1100;
 const BOT_QUIET_MS = 350;
@@ -124,11 +129,17 @@ export class GameRoomObject extends Server<Env> {
       marked: meta.marked,
     });
     for (const e of log) {
-      if (e.k === 'dev') { room.devForceTurning(); continue; }
+      if (e.k === "dev") {
+        room.devForceTurning();
+        continue;
+      }
       const r = room.submit(e.seat, e.command);
       // A log that will not replay is a bug worth surfacing loudly rather than
       // a game that quietly diverges from the one people played.
-      if (!r.ok) throw new Error(`replay failed at ${e.seat} ${e.command.t}: ${r.error}`);
+      if (!r.ok)
+        throw new Error(
+          `replay failed at ${e.seat} ${e.command.t}: ${r.error}`,
+        );
     }
     this.room = room;
     return room;
@@ -155,27 +166,28 @@ export class GameRoomObject extends Server<Env> {
   }
 
   async onMessage(conn: Connection<ConnState>, raw: WSMessage): Promise<void> {
-    const text = typeof raw === 'string' ? raw : null;
-    if (text === null) return this.#err(conn, 'Binary frames are not accepted');
-    if (text.length > MAX_MESSAGE_BYTES) return this.#err(conn, 'Message too large');
-    if (!this.#allow(conn)) return this.#err(conn, 'Slow down');
+    const text = typeof raw === "string" ? raw : null;
+    if (text === null) return this.#err(conn, "Binary frames are not accepted");
+    if (text.length > MAX_MESSAGE_BYTES)
+      return this.#err(conn, "Message too large");
+    if (!this.#allow(conn)) return this.#err(conn, "Slow down");
 
     let payload: unknown;
     try {
       payload = JSON.parse(text);
     } catch {
-      return this.#err(conn, 'Malformed message');
+      return this.#err(conn, "Malformed message");
     }
     const msg = parse(payload);
-    if (!msg) return this.#err(conn, 'Malformed message');
+    if (!msg) return this.#err(conn, "Malformed message");
 
     try {
       await this.#route(conn, msg);
     } catch (e) {
       // An unexpected throw is this object's problem, not a game rule. Say so
       // without handing the client a stack trace.
-      console.error('room error', e);
-      this.#err(conn, 'Something went wrong in the room');
+      console.error("room error", e);
+      this.#err(conn, "Something went wrong in the room");
     }
   }
 
@@ -190,8 +202,8 @@ export class GameRoomObject extends Server<Env> {
     // can come back — same rule as `server/hub.ts`.
     if (!meta.begun) {
       const chair = meta.seats.find((s) => s.id === seat);
-      if (chair && chair.kind === 'human') {
-        chair.kind = 'open';
+      if (chair && chair.kind === "human") {
+        chair.kind = "open";
         chair.name = null;
         chair.token = null;
       }
@@ -204,24 +216,38 @@ export class GameRoomObject extends Server<Env> {
 
   async #route(conn: Connection<ConnState>, msg: Inbound): Promise<void> {
     switch (msg.t) {
-      case 'create': return this.#create(conn, msg.seats, msg.seed);
-      case 'join': return this.#join(conn, msg.name);
-      case 'rejoin': return this.#rejoin(conn, msg.token);
-      case 'seat': return this.#setSeat(conn, msg.index, msg.kind);
-      case 'begin': return this.#begin(conn, msg.marked);
-      case 'command': return this.#command(conn, msg.command);
-      case 'leave': return this.#leave(conn);
-      case 'dev': return this.#dev(conn, msg.action);
+      case "create":
+        return this.#create(conn, msg.seats, msg.seed);
+      case "join":
+        return this.#join(conn, msg.name);
+      case "rejoin":
+        return this.#rejoin(conn, msg.token);
+      case "seat":
+        return this.#setSeat(conn, msg.index, msg.kind);
+      case "begin":
+        return this.#begin(conn, msg.marked);
+      case "command":
+        return this.#command(conn, msg.command);
+      case "leave":
+        return this.#leave(conn);
+      case "dev":
+        return this.#dev(conn, msg.action);
       // Presence voting is not ported yet — see worker/README.md. The old
       // server still has it, and answering with an error is honest.
-      case 'vote': return this.#err(conn, 'Voting is not available on this server');
-      default: return this.#err(conn, 'Unknown message');
+      case "vote":
+        return this.#err(conn, "Voting is not available on this server");
+      default:
+        return this.#err(conn, "Unknown message");
     }
   }
 
-  async #create(conn: Connection<ConnState>, seats: number, seed?: string): Promise<void> {
+  async #create(
+    conn: Connection<ConnState>,
+    seats: number,
+    seed?: string,
+  ): Promise<void> {
     const { meta } = await this.#load();
-    if (meta) return this.#err(conn, 'This room already exists');
+    if (meta) return this.#err(conn, "This room already exists");
     const count = Math.floor(seats);
     if (!Number.isFinite(count) || count < MIN_SEATS || count > MAX_SEATS) {
       return this.#err(conn, `A table seats ${MIN_SEATS} to ${MAX_SEATS}`);
@@ -232,36 +258,45 @@ export class GameRoomObject extends Server<Env> {
       // from it, so a guessable seed would make the traitor guessable.
       seed: seed ?? crypto.randomUUID(),
       seats: Array.from({ length: count }, (_, i) => ({
-        id: `p${i}`, kind: 'open' as const, name: null, token: null,
+        id: `p${i}`,
+        kind: "open" as const,
+        name: null,
+        token: null,
       })),
       marked: null,
       begun: false,
       createdAt: Date.now(),
     };
     await this.#putMeta(next);
-    this.#send(conn, { t: 'created', roomId: this.name });
+    this.#send(conn, { t: "created", roomId: this.name });
     this.#broadcastTable(next);
   }
 
   async #join(conn: Connection<ConnState>, name: string): Promise<void> {
     const { meta } = await this.#load();
-    if (!meta) return this.#err(conn, 'No such room');
-    if (conn.state?.seat) return this.#err(conn, 'Already seated');
+    if (!meta) return this.#err(conn, "No such room");
+    if (conn.state?.seat) return this.#err(conn, "Already seated");
 
     const free = meta.begun
-      ? meta.seats.find((s) => s.kind === 'human' && !s.token && !this.#driven(s.id))
-      : meta.seats.find((s) => s.kind === 'open');
-    if (!free) return this.#err(conn, 'Room is full');
+      ? meta.seats.find(
+          (s) => s.kind === "human" && !s.token && !this.#driven(s.id),
+        )
+      : meta.seats.find((s) => s.kind === "open");
+    if (!free) return this.#err(conn, "Room is full");
 
     const token = crypto.randomUUID();
-    free.kind = 'human';
+    free.kind = "human";
     free.name = name;
     free.token = token;
     await this.#putMeta(meta);
     conn.setState({ seat: free.id, token, hits: conn.state?.hits ?? [] });
 
     this.#send(conn, {
-      t: 'joined', roomId: this.name, seat: free.id, token, dev: this.#devOn(),
+      t: "joined",
+      roomId: this.name,
+      seat: free.id,
+      token,
+      dev: this.#devOn(),
     });
     if (meta.begun) await this.#syncAll();
     else this.#broadcastTable(meta);
@@ -269,14 +304,18 @@ export class GameRoomObject extends Server<Env> {
 
   async #rejoin(conn: Connection<ConnState>, token: string): Promise<void> {
     const { meta } = await this.#load();
-    if (!meta) return this.#err(conn, 'No such room');
+    if (!meta) return this.#err(conn, "No such room");
     const chair = meta.seats.find((s) => s.token === token);
     // A bad token must not say whether the room or the token was wrong.
-    if (!chair) return this.#err(conn, 'Cannot rejoin');
+    if (!chair) return this.#err(conn, "Cannot rejoin");
 
     conn.setState({ seat: chair.id, token, hits: conn.state?.hits ?? [] });
     this.#send(conn, {
-      t: 'joined', roomId: this.name, seat: chair.id, token, dev: this.#devOn(),
+      t: "joined",
+      roomId: this.name,
+      seat: chair.id,
+      token,
+      dev: this.#devOn(),
     });
     if (meta.begun) await this.#syncAll();
     else this.#broadcastTable(meta);
@@ -291,7 +330,10 @@ export class GameRoomObject extends Server<Env> {
       // Burn the token. A disconnect keeps it — the point of a disconnect is
       // that you meant to come back. Leaving is the opposite statement.
       chair.token = null;
-      if (!meta.begun) { chair.kind = 'open'; chair.name = null; }
+      if (!meta.begun) {
+        chair.kind = "open";
+        chair.name = null;
+      }
     }
     await this.#putMeta(meta);
     conn.setState({ seat: null, token: null, hits: [] });
@@ -299,34 +341,40 @@ export class GameRoomObject extends Server<Env> {
   }
 
   async #setSeat(
-    conn: Connection<ConnState>, index: number, kind: 'bot' | 'open',
+    conn: Connection<ConnState>,
+    index: number,
+    kind: "bot" | "open",
   ): Promise<void> {
     const { meta } = await this.#load();
-    if (!meta) return this.#err(conn, 'No such room');
-    if (!conn.state?.seat) return this.#err(conn, 'Not in a room');
-    if (meta.begun) return this.#err(conn, 'The game has already begun');
+    if (!meta) return this.#err(conn, "No such room");
+    if (!conn.state?.seat) return this.#err(conn, "Not in a room");
+    if (meta.begun) return this.#err(conn, "The game has already begun");
     const chair = meta.seats[index];
-    if (!chair) return this.#err(conn, 'No such seat');
-    if (chair.kind === 'human') return this.#err(conn, 'Someone is sitting there');
+    if (!chair) return this.#err(conn, "No such seat");
+    if (chair.kind === "human")
+      return this.#err(conn, "Someone is sitting there");
     chair.kind = kind;
-    chair.name = kind === 'bot' ? (BOT_NAMES[index] ?? `Bot ${index + 1}`) : null;
+    chair.name =
+      kind === "bot" ? (BOT_NAMES[index] ?? `Bot ${index + 1}`) : null;
     await this.#putMeta(meta);
     this.#broadcastTable(meta);
   }
 
   async #begin(conn: Connection<ConnState>, marked: boolean): Promise<void> {
     const { meta } = await this.#load();
-    if (!meta) return this.#err(conn, 'No such room');
-    if (!conn.state?.seat) return this.#err(conn, 'Not in a room');
-    if (meta.begun) return this.#err(conn, 'The game has already begun');
-    if (meta.seats.some((s) => s.kind === 'open')) {
-      return this.#err(conn, 'Every chair must be filled first');
+    if (!meta) return this.#err(conn, "No such room");
+    if (!conn.state?.seat) return this.#err(conn, "Not in a room");
+    if (meta.begun) return this.#err(conn, "The game has already begun");
+    if (meta.seats.some((s) => s.kind === "open")) {
+      return this.#err(conn, "Every chair must be filled first");
     }
     meta.begun = true;
     meta.marked = marked ? markedIndex(meta.seed, meta.seats.length) : null;
     await this.#putMeta(meta);
-    this.room = undefined;               // force a build with the final seats
-    await this.#syncAll();
+    this.room = undefined; // force a build with the final seats
+    const game = await this.#game();
+    // The deal, not a resync: the opening hand should arrive as one.
+    if (game) this.#deliver(game.deal(), game.botSeats);
     await this.#scheduleBot();
   }
 
@@ -339,25 +387,28 @@ export class GameRoomObject extends Server<Env> {
    */
   async #command(conn: Connection<ConnState>, command: Command): Promise<void> {
     const seat = conn.state?.seat;
-    if (!seat) return this.#err(conn, 'Not seated');
+    if (!seat) return this.#err(conn, "Not seated");
     const room = await this.#game();
-    if (!room) return this.#err(conn, 'The game has not begun');
+    if (!room) return this.#err(conn, "The game has not begun");
 
     // The seat comes from the connection, never from the message.
     const res = room.submit(seat, command);
     if (!res.ok) return this.#err(conn, res.error);
 
-    await this.#append({ k: 'cmd', seat, command });
-    this.#deliver(res.updates);
+    await this.#append({ k: "cmd", seat, command });
+    this.#deliver(res.updates, room.botSeats);
     await this.#scheduleBot();
   }
 
-  async #dev(conn: Connection<ConnState>, action: 'turning' | 'restart'): Promise<void> {
-    if (!this.#devOn()) return this.#err(conn, 'Not available');
+  async #dev(
+    conn: Connection<ConnState>,
+    action: "turning" | "restart",
+  ): Promise<void> {
+    if (!this.#devOn()) return this.#err(conn, "Not available");
     const { meta } = await this.#load();
-    if (!meta || !conn.state?.seat) return this.#err(conn, 'Not in a room');
+    if (!meta || !conn.state?.seat) return this.#err(conn, "Not in a room");
 
-    if (action === 'restart') {
+    if (action === "restart") {
       // A fresh deal is a new seed and an empty log, not a rewind.
       meta.seed = crypto.randomUUID();
       await this.#putMeta(meta);
@@ -369,10 +420,10 @@ export class GameRoomObject extends Server<Env> {
     }
 
     const room = await this.#game();
-    if (!room) return this.#err(conn, 'The game has not begun');
+    if (!room) return this.#err(conn, "The game has not begun");
     const updates = room.devForceTurning();
-    await this.#append({ k: 'dev', action: 'turning' });
-    this.#deliver(updates);
+    await this.#append({ k: "dev", action: "turning" });
+    this.#deliver(updates, room.botSeats);
     await this.#scheduleBot();
   }
 
@@ -393,7 +444,8 @@ export class GameRoomObject extends Server<Env> {
       return;
     }
     const existing = await this.ctx.storage.getAlarm();
-    if (existing === null) await this.ctx.storage.setAlarm(Date.now() + BOT_MIN_GAP_MS);
+    if (existing === null)
+      await this.ctx.storage.setAlarm(Date.now() + BOT_MIN_GAP_MS);
   }
 
   async alarm(): Promise<void> {
@@ -407,8 +459,8 @@ export class GameRoomObject extends Server<Env> {
     if (!next) return;
     const res = room.submit(next.seat, next.command);
     if (!res.ok) return;
-    await this.#append({ k: 'cmd', seat: next.seat, command: next.command });
-    this.#deliver(res.updates);
+    await this.#append({ k: "cmd", seat: next.seat, command: next.command });
+    this.#deliver(res.updates, room.botSeats);
 
     if (room.awaitingBot) {
       await this.ctx.storage.setAlarm(Date.now() + pauseAfter(res.updates));
@@ -427,17 +479,18 @@ export class GameRoomObject extends Server<Env> {
    * GameEvent[] leaks SCRIED, which names the card a scryer pushed to the top
    * of the Threat deck.
    */
-  #deliver(updates: Update[]): void {
+  #deliver(updates: Update[], bots: PlayerId[] = []): void {
     for (const conn of this.getConnections<ConnState>()) {
       const seat = conn.state?.seat;
       if (!seat) continue;
       const mine = updates.find((u) => u.seat === seat);
       if (!mine) continue;
       this.#send(conn, {
-        t: 'state',
+        t: "state",
         view: mine.view,
         events: visibleEvents(mine.events, seat),
         legal: mine.legal,
+        bots,
       });
     }
   }
@@ -445,18 +498,20 @@ export class GameRoomObject extends Server<Env> {
   async #syncAll(): Promise<void> {
     const room = await this.#game();
     if (!room) return;
-    this.#deliver(room.sync());
+    this.#deliver(room.sync(), room.botSeats);
   }
 
   #broadcastTable(meta: RoomMeta): void {
     const seats: TableSeat[] = meta.seats.map((s) => ({
-      id: s.id, kind: s.kind, name: s.name,
+      id: s.id,
+      kind: s.kind,
+      name: s.name,
     }));
     const msg: Outbound = {
-      t: 'table',
+      t: "table",
       roomId: this.name,
       seats,
-      canBegin: meta.seats.every((s) => s.kind !== 'open'),
+      canBegin: meta.seats.every((s) => s.kind !== "open"),
     };
     for (const conn of this.getConnections<ConnState>()) this.#send(conn, msg);
   }
@@ -466,7 +521,7 @@ export class GameRoomObject extends Server<Env> {
   }
 
   #err(conn: Connection<ConnState>, message: string): void {
-    this.#send(conn, { t: 'error', message });
+    this.#send(conn, { t: "error", message });
   }
 
   // --------------------------------------------------------------- guards
@@ -480,7 +535,7 @@ export class GameRoomObject extends Server<Env> {
   }
 
   #devOn(): boolean {
-    return this.env.LONG_NOON_DEV === '1';
+    return this.env.LONG_NOON_DEV === "1";
   }
 
   /** Sliding-window rate limit, per connection, kept in connection state. */
@@ -533,11 +588,13 @@ function markedIndex(seed: string, seats: number): number {
 function pauseAfter(updates: Update[]): number {
   const events: GameEvent[] = updates[0]?.events ?? [];
   const beats = beatsIn(events, false);
-  const paced = beats === 0
-    ? BOT_QUIET_MS
-    : BOT_BASE_MS + BOT_READ_MS * Math.min(beats - 1, 8)
-      + (hasDusk(events) ? BOT_DUSK_MS : 0)
-      + (hasTurning(events) ? BOT_TURNING_MS : 0);
+  const paced =
+    beats === 0
+      ? BOT_QUIET_MS
+      : BOT_BASE_MS +
+        BOT_READ_MS * Math.min(beats - 1, 8) +
+        (hasDusk(events) ? BOT_DUSK_MS : 0) +
+        (hasTurning(events) ? BOT_TURNING_MS : 0);
   return Math.max(BOT_MIN_GAP_MS, paced);
 }
 
@@ -550,33 +607,39 @@ function pauseAfter(updates: Update[]): number {
  * create until this moved with it.
  */
 function parse(raw: unknown): Inbound | null {
-  if (typeof raw !== 'object' || raw === null) return null;
+  if (typeof raw !== "object" || raw === null) return null;
   const m = raw as Record<string, unknown>;
-  const str = (k: string) => typeof m[k] === 'string';
+  const str = (k: string) => typeof m[k] === "string";
   switch (m.t) {
-    case 'create':
-      return typeof m.seats === 'number' ? (m as Inbound) : null;
-    case 'join':
-      return str('name') ? (m as Inbound) : null;
-    case 'rejoin':
-      return str('token') ? (m as Inbound) : null;
-    case 'command':
-      return typeof m.command === 'object' && m.command !== null
-        && typeof (m.command as Record<string, unknown>).t === 'string'
-        ? (m as Inbound) : null;
-    case 'vote':
-      return str('seat') && (m.choice === 'bot' || m.choice === 'wait')
-        ? (m as Inbound) : null;
-    case 'leave':
+    case "create":
+      return typeof m.seats === "number" ? (m as Inbound) : null;
+    case "join":
+      return str("name") ? (m as Inbound) : null;
+    case "rejoin":
+      return str("token") ? (m as Inbound) : null;
+    case "command":
+      return typeof m.command === "object" &&
+        m.command !== null &&
+        typeof (m.command as Record<string, unknown>).t === "string"
+        ? (m as Inbound)
+        : null;
+    case "vote":
+      return str("seat") && (m.choice === "bot" || m.choice === "wait")
+        ? (m as Inbound)
+        : null;
+    case "leave":
       return m as Inbound;
-    case 'seat':
-      return typeof m.index === 'number'
-        && (m.kind === 'bot' || m.kind === 'open') ? (m as Inbound) : null;
-    case 'begin':
-      return typeof m.marked === 'boolean' ? (m as Inbound) : null;
-    case 'dev':
-      return m.action === 'turning' || m.action === 'restart'
-        ? (m as Inbound) : null;
+    case "seat":
+      return typeof m.index === "number" &&
+        (m.kind === "bot" || m.kind === "open")
+        ? (m as Inbound)
+        : null;
+    case "begin":
+      return typeof m.marked === "boolean" ? (m as Inbound) : null;
+    case "dev":
+      return m.action === "turning" || m.action === "restart"
+        ? (m as Inbound)
+        : null;
     default:
       return null;
   }

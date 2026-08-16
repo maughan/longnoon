@@ -113,7 +113,7 @@ tie-breaking was measured and fixed (it sent every hit to one seat).
 Full detail in [`sim/FINDINGS.md`](sim/FINDINGS.md).
 
 Act II was missing three mechanics the paper prototype specifies — the Vessel
-was not a damage target, the Old One and Revenants could not aim their Fevered
+was not a damage target, the Vessel and Revenants could not aim their Fevered
 cards, and the Omen reset was absent. Those are now implemented and tested, which
 made the corruption economy measurable for the first time.
 

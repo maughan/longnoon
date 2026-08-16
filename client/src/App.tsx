@@ -6,18 +6,20 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { card, SIGN_IDS } from "../../content/cards";
-import { opsFor } from "../../engine/effects";
+import { card, SIGN_IDS, TUNING } from "../../content/cards";
+import { opsFor, effectiveClear, effectiveMenace } from "../../engine/effects";
 import type {
   Card,
   CardInstance,
   Command,
-  Op,
+  GameEvent,
+  StreetSlot,
   PlayerId,
 } from "../../engine/state";
 import type { ClientState } from "../../engine/view";
 import { useNet, roomFor, type Net } from "./net";
 import { GLOSSARY, Rules, Term, Tooltips } from "./glossary";
+import { describeOps, cardKeywords, thirdLine } from "./cardText";
 import { nameOf as whoIs, type Beat } from "./beats";
 import { Icon, type IconName } from "./components/Icon";
 import {
@@ -29,7 +31,11 @@ import cardBack from "./components/images/card-back.svg";
 import { Dusk } from "./components/Dusk";
 import { Turning } from "./components/Turning";
 import { createCoinPool, type CoinPool } from "./coinPool";
-import { createCardSounds, type CardSounds } from "./cardSounds";
+import {
+  createCardSounds,
+  DEAL_STAGGER_MS,
+  type CardSounds,
+} from "./cardSounds";
 import { duskReport, isDusk, type DuskReport } from "./duskReport";
 import {
   BEDS,
@@ -48,7 +54,8 @@ import { iconForCard, iconForStatus, TERM_ICONS } from "./icons";
  * it in development. The local default keeps `npm run dev:server` working with
  * no .env at all.
  */
-const PARTY_HOST = import.meta.env.VITE_PARTY_HOST ?? `${location.hostname}:8787`;
+const PARTY_HOST =
+  import.meta.env.VITE_PARTY_HOST ?? `${location.hostname}:8787`;
 
 /**
  * The room, from the URL.
@@ -69,9 +76,9 @@ function useRoomUrl(net: Net, room: string): void {
   // so the address bar cannot claim a room the socket never opened.
   useEffect(() => {
     const named = net.roomId ?? room;
-    const current = new URLSearchParams(location.search).get('room');
+    const current = new URLSearchParams(location.search).get("room");
     if (current === named) return;
-    history.replaceState(null, '', `?room=${encodeURIComponent(named)}`);
+    history.replaceState(null, "", `?room=${encodeURIComponent(named)}`);
   }, [net.roomId, room]);
 }
 
@@ -202,7 +209,7 @@ function Waiting({ net }: { net: Net }) {
               )}
               {s.kind === "bot" && (
                 <>
-                  <Icon name="revenant" size={14} /> {s.name}
+                  {s.name} <BotTag />
                 </>
               )}
               {s.kind === "open" && <em>empty chair</em>}
@@ -259,15 +266,16 @@ function Game({ net }: { net: Net }) {
   const yours = net.legal.length > 0;
   const [showGlossary, setGlossary] = useState(false);
   const [showMarket, setMarket] = useState(false);
-  const [turning, endTurning, showTurning] = useTurningMoment(v.act);
+  const [turning, endTurning] = useTurningMoment(v.act);
   /**
-   * One queue, in arrival order, however the beat got here.
+   * One append-only queue, in arrival order.
    *
-   * Previously this merged two growing arrays — `[...net.beats, ...rehearsed]`
-   * — and the overlay indexed into the result. Every beat the server sent
-   * shifted the rehearsed ones one place to the right, so an index that had
-   * already been shown pointed at something new. One append-only list is the
-   * only shape that survives a consumer holding a position in it.
+   * Single-source now that the Dusk/Turning rehearsal buttons are gone, but
+   * still not the same array as `net.beats`: the overlay holds a POSITION in
+   * this list, and `net.beats` is emptied on leaving a room. Append-only is the
+   * only shape that survives a consumer holding an index into it — this used to
+   * merge two growing arrays, and every beat the server sent shifted the others
+   * one place right, so an index already shown pointed at something new.
    */
   const [queue, enqueue] = useState<Beat[]>([]);
   const taken = useRef(0);
@@ -277,12 +285,20 @@ function Game({ net }: { net: Net }) {
     taken.current = net.beats.length;
     enqueue((q) => [...q, ...fresh]);
   }, [net.beats]);
-  const rehearse = useCallback((b: Omit<Beat, "id">) => {
-    // Negative ids cannot collide with the counter in net.ts.
-    enqueue((q) => [...q, { ...b, id: -1 - q.length }]);
-  }, []);
   const [showSettings, setSettings] = useState(false);
   const [readingBoard, setReadingBoard] = useState(false);
+  /**
+   * The card being looked at closely.
+   *
+   * Its own gesture, deliberately: clicking a card already means "buy" on the
+   * shelf and "aim at this" in the Street, and dragging one means play. A
+   * fourth meaning for the same click would make every one of them a guess.
+   */
+  const [zoom, setZoom] = useState<{
+    def: Card;
+    fevered: boolean;
+    slot?: StreetSlot;
+  } | null>(null);
   /**
    * The last Dusk, held until this player has read it.
    *
@@ -293,16 +309,34 @@ function Game({ net }: { net: Net }) {
    */
   const [dusk, setDusk] = useState<DuskReport | null>(null);
   const readDusk = useRef(0);
+  /**
+   * Whether the hand behind the sheet is a new one.
+   *
+   * Only then is there a deal to replay when the report comes down — remounting
+   * the fan otherwise would re-deal the same five cards a player has been
+   * holding all along.
+   */
+  const dealtUnderDusk = useRef(false);
+  const [dealNonce, setDealNonce] = useState(0);
   useEffect(() => {
     if (net.feed.seq === readDusk.current) return;
     readDusk.current = net.feed.seq;
     if (isDusk(net.feed.events)) {
       setDusk(duskReport(net.feed.events, v, net.seat));
+      dealtUnderDusk.current = net.feed.events.some(
+        (e) => e.t === "DREW" && e.player === net.seat,
+      );
     }
   }, [net.feed, v, net.seat]);
   const sound = useSettings();
   useCoins(net.feed, net.seat, sound.effectsLevel);
-  useCardSounds(net.feed, net.seat, sound.effectsLevel);
+  useCardSounds(
+    net.feed,
+    net.seat,
+    sound.effectsLevel,
+    v.handSize ?? TUNING.handSize,
+    !!dusk,
+  );
   // Act I only. The bed belongs to the Long Season; once the Turning has
   // happened the silence underneath Act II is doing its own work.
   // The bed gets out of the way for the two scored moments. Dusk hands it back
@@ -401,14 +435,6 @@ function Game({ net }: { net: Net }) {
         onAct={(action) => net.send({ t: "dev", action })}
         onGlossary={() => setGlossary(true)}
         onSettings={() => setSettings(true)}
-        onTurning={showTurning}
-        onRehearse={() =>
-          rehearse({
-            kind: "dusk",
-            title: "Dusk",
-            detail: "the Street collects",
-          })
-        }
       />
 
       <div className="felt">
@@ -430,6 +456,7 @@ function Game({ net }: { net: Net }) {
             canTarget={canTarget}
             onTarget={resolve}
             drag={drag}
+            onZoom={(def, slot) => setZoom({ def, fevered: false, slot })}
             onDropOn={(slot) => {
               // Remember where it was pointed before the card is even played.
               aimed.current = { key: String(slot), after: net.rev };
@@ -439,7 +466,12 @@ function Game({ net }: { net: Net }) {
           />
         </div>
         <aside className="side">
-          <Posse v={v} canTarget={canTarget} onTarget={resolve} />
+          <Posse
+            v={v}
+            canTarget={canTarget}
+            onTarget={resolve}
+            bots={net.bots}
+          />
           <div className="chronicle">
             <h2>The chronicle</h2>
             <ol>
@@ -463,6 +495,9 @@ function Game({ net }: { net: Net }) {
         buyable={buys.length}
         drag={drag}
         onDrag={setDrag}
+        onZoom={(def, fevered) => setZoom({ def, fevered })}
+        dealNonce={dealNonce}
+        holdDeal={!!dusk && dealtUnderDusk.current}
       />
 
       {v.pending && (
@@ -492,6 +527,7 @@ function Game({ net }: { net: Net }) {
           buys={buys}
           onPlay={net.play}
           onClose={() => setMarket(false)}
+          onZoom={(def, fevered) => setZoom({ def, fevered })}
         />
       )}
 
@@ -516,7 +552,7 @@ function Game({ net }: { net: Net }) {
               ? "The Vessel is buried. Whatever it was, it is under the ground again."
               : "Doom ran out the clock. It was always going to be someone."}
           </p>
-          <Verdict v={v} />
+          <Verdict v={v} bots={net.bots} />
           <div className="opts">
             {/* Reading the final board is most of the post-mortem in a
              * hidden-role game — who was Marked, who was carrying what. */}
@@ -541,12 +577,30 @@ function Game({ net }: { net: Net }) {
         <DuskSheet
           report={dusk}
           volume={sound.effectsLevel}
-          onClose={() => setDusk(null)}
+          onClose={() => {
+            setDusk(null);
+            // Deal now, in front of them, rather than having dealt behind it.
+            if (dealtUnderDusk.current) {
+              dealtUnderDusk.current = false;
+              setDealNonce((n) => n + 1);
+            }
+          }}
         />
       )}
 
+      {zoom && (
+        <CardZoom
+          {...zoom}
+          omenMenace={v.omenMenace}
+          onClose={() => setZoom(null)}
+        />
+      )}
       {showSettings && (
-        <SettingsPanel s={sound} onClose={() => setSettings(false)} />
+        <SettingsPanel
+          s={sound}
+          handSize={v.handSize}
+          onClose={() => setSettings(false)}
+        />
       )}
       {showGlossary && <GlossaryPanel onClose={() => setGlossary(false)} />}
     </div>
@@ -560,7 +614,7 @@ function Game({ net }: { net: Net }) {
  * across a rail nobody reads while the verdict is up, and it is the first thing
  * anyone asks about afterwards.
  */
-function Verdict({ v }: { v: ClientState }) {
+function Verdict({ v, bots }: { v: ClientState; bots: PlayerId[] }) {
   const me = v.you!;
   const seats = [
     { name: "You", role: me.role, status: me.status, id: me.id },
@@ -575,7 +629,10 @@ function Verdict({ v }: { v: ClientState }) {
     <dl className="whowas">
       {seats.map((p) => (
         <div key={p.id}>
-          <dt>{p.name}</dt>
+          <dt>
+            {p.name}
+            {bots.includes(p.id) && <BotTag size={12} />}
+          </dt>
           <dd>
             {p.role === "marked" && (
               <>
@@ -824,9 +881,23 @@ function useCardSounds(
   feed: Net["feed"],
   seat: PlayerId | null,
   level: number,
+  /** From the view: what counts as a whole hand rather than a single draw. */
+  handSize: number,
+  /** True while the Dusk report is up. Draws wait for it. */
+  duskOpen: boolean,
 ): void {
   const sounds = useRef<CardSounds | null>(null);
   const seen = useRef(0);
+  /**
+   * Draws that arrived under the Dusk sheet.
+   *
+   * The Dusk batch carries the whole of the next round with it — Dusk resolves,
+   * the round begins, and the first player is dealt a hand, all in one message.
+   * So the deal happened behind the report: the sound played to a covered
+   * table and the cards were already lying there when the sheet came down.
+   * Held here and played when the player has actually looked away from it.
+   */
+  const held = useRef<GameEvent[]>([]);
 
   useEffect(() => {
     if (feed.seq === seen.current) return;
@@ -834,8 +905,32 @@ function useCardSounds(
     seen.current = feed.seq;
     if (level <= 0) return;
     sounds.current ??= createCardSounds();
-    sounds.current.hear(feed.events, seat, level);
-  }, [feed, seat, level]);
+
+    // Judged from the batch, not from `duskOpen`: the sheet and this hook are
+    // told about the same message in the same commit, so reading the flag here
+    // would be a race with whichever effect ran first.
+    if (isDusk(feed.events)) {
+      held.current = feed.events.filter((e) => e.t === "DREW");
+      sounds.current.hear(
+        feed.events.filter((e) => e.t !== "DREW"),
+        seat,
+        level,
+        handSize,
+      );
+      return;
+    }
+    sounds.current.hear(feed.events, seat, level, handSize);
+  }, [feed, seat, level, handSize]);
+
+  // The sheet is down: deal.
+  useEffect(() => {
+    if (duskOpen || !held.current.length) return;
+    const pending = held.current;
+    held.current = [];
+    if (level <= 0) return;
+    sounds.current ??= createCardSounds();
+    sounds.current.hear(pending, seat, level, handSize);
+  }, [duskOpen, seat, level, handSize]);
 }
 
 /**
@@ -959,7 +1054,7 @@ function useAmbience(
  */
 function useTurningMoment(
   act: ClientState["act"],
-): readonly [boolean, () => void, () => void] {
+): readonly [boolean, () => void] {
   const [seen, setSeen] = useState(act);
   const [shown, setShown] = useState(false);
   useEffect(() => {
@@ -967,8 +1062,10 @@ function useTurningMoment(
     setSeen(act);
   }, [act, seen]);
   const end = useCallback(() => setShown(false), []);
-  const show = useCallback(() => setShown(true), []);
-  return [shown, end, show] as const;
+  // No manual trigger. The act changing is the only thing that opens this —
+  // including via the dev "-> Act II" button, which goes through the server and
+  // comes back as a real Turning rather than playing the animation on its own.
+  return [shown, end] as const;
 }
 
 // ------------------------------------------------------------------ parts
@@ -977,8 +1074,6 @@ function TopBar({
   v,
   yours,
   onGlossary,
-  onRehearse,
-  onTurning,
   onSettings,
   dev,
   onAct,
@@ -986,8 +1081,6 @@ function TopBar({
   v: ClientState;
   yours: boolean;
   onGlossary: () => void;
-  onRehearse: () => void;
-  onTurning: () => void;
   onSettings: () => void;
   dev: boolean;
   onAct: (action: "turning" | "restart") => void;
@@ -1000,11 +1093,22 @@ function TopBar({
         <small>round {v.round}</small>
       </div>
 
+      {/*
+        One bar, both acts. What waits at the top of it changes — the Turning,
+        then Doom — and the caption says which, because a bar that resets with
+        no explanation reads as a bug rather than as a clock.
+      */}
       <Track
         icon="whisper"
         label={<Term k="whispers" />}
         now={v.whispers}
         max={v.whisperThreshold}
+        note={
+          v.act === "trouble"
+            ? undefined
+            : `+${v.nextFillDoom} Doom when it fills` +
+              (v.whisperFills ? ` · filled ${v.whisperFills}× so far` : "")
+        }
       />
       {v.act === "mythos" && (
         <Track
@@ -1042,24 +1146,9 @@ function TopBar({
                 ? "resolving"
                 : `${whoIs(v, v.activePlayer, me.id)}'s Turn`}
         </span>
-        <button
-          className="pilebtn"
-          onClick={onRehearse}
-          title="Play the Dusk animation now — shows the sun without waiting for
-the round to end. Changes nothing in the game."
-        >
-          <Icon name="doom" size={12} /> Dusk
-        </button>
-        <button
-          className="pilebtn"
-          onClick={onTurning}
-          title="Play the Turning animation. Changes nothing in the game."
-        >
-          <Icon name="fevered" size={12} /> Turning
-        </button>
         {dev && (
-          // These change the game, unlike the two rehearsal buttons beside
-          // them, and only exist when the server was started with them on.
+          // These change the game, and only exist when the server was started
+          // with them on.
           <span className="devbox" title="Development tools">
             {v.act === "trouble" ? (
               <button
@@ -1098,33 +1187,64 @@ so Act I means a new deal."
   );
 }
 
+/**
+ * Beads on a string.
+ *
+ * One pip per point where the total is small enough to count — which is the
+ * whole reason to prefer them to a bar. A bar says "about two thirds"; pips say
+ * "four of six", and four of six is the number a player is actually deciding
+ * against. Only a track too long to count (Doom at 50) is scaled.
+ */
+function Pips({ now, max, tone }: { now: number; max: number; tone?: string }) {
+  const countable = max > 0 && max <= MAX_PIPS;
+  const count = countable ? max : MAX_PIPS;
+  const lit = countable
+    ? Math.min(now, max)
+    : Math.round((Math.min(now, max) / Math.max(max, 1)) * count);
+  return (
+    <div className={`pips ${tone ?? ""}`}>
+      {Array.from({ length: count }, (_, i) => (
+        <i key={i} className={`pip ${i < lit ? "on" : ""}`} />
+      ))}
+    </div>
+  );
+}
+
+const MAX_PIPS = 20;
+
 /** Beads on a string read as a track. A progress bar reads as a download. */
 function Track({
   icon,
   label,
   now,
   max,
+  note,
   tone = "whisper",
 }: {
   icon: IconName;
   label: React.ReactNode;
   now: number;
   max: number;
+  /** What happens when it fills, when that is not obvious. */
+  note?: string;
   tone?: string;
 }) {
-  const pips = Math.min(max, 20);
-  const lit = Math.round((Math.min(now, max) / max) * pips);
+  /*
+    Coerced, because this has now shipped "/NaN" twice.
+    A field the running server does not yet send arrives as `undefined`, and
+    every arithmetic path downstream — Math.max, the Pips division — turns that
+    into NaN and prints it. The track is the most-read thing on the screen and
+    it should degrade to a wrong number rather than to a broken one.
+  */
+  const at = Number.isFinite(now) ? Math.max(0, now) : 0;
+  const of = Number.isFinite(max) && max > 0 ? max : 1;
   return (
-    <div className={`track ${tone}`}>
+    <div className={`track ${tone}`} title={note}>
       <Icon name={icon} size={15} />
       <span>
-        {label} {now}/{max}
+        {label} {at}/{of}
       </span>
-      <div className="pips">
-        {Array.from({ length: pips }, (_, i) => (
-          <i key={i} className={`pip ${i < lit ? "on" : ""}`} />
-        ))}
-      </div>
+      <Pips now={at} max={of} />
     </div>
   );
 }
@@ -1135,12 +1255,14 @@ function Street({
   onTarget,
   drag,
   onDropOn,
+  onZoom,
 }: {
   v: ClientState;
   canTarget: (k: string) => boolean;
   onTarget: (k: string) => void;
   drag: Drag | null;
   onDropOn: (slot: number) => void;
+  onZoom: (def: Card, slot: StreetSlot) => void;
 }) {
   return (
     <section className="stage">
@@ -1156,7 +1278,10 @@ function Street({
               </div>
             );
           const def = card(slot.instance.cardId);
-          const clear = def.clear ?? 0;
+          // The lived value, not the printed one. A Threat that has escalated
+          // needs more damage than its card says, and a bar measured against
+          // the printed total reads full while the Threat is still standing.
+          const clear = effectiveClear(slot) ?? 0;
           const hot = canTarget(String(i));
           const takes = !!drag?.play;
           return (
@@ -1198,25 +1323,38 @@ function Street({
                 .filter(Boolean)
                 .join(" ")}
             >
-              <CardFace {...faceOf(def, false)} width={168} />
+              <CardFace
+                {...faceOf(def, false, { slot, omenMenace: v.omenMenace })}
+                width={168}
+              />
               {/* Damage taken is state, not the card, so it sits under it. An
                * Omen has no Clear value and gets no bar — the absence is the
                * point. */}
-              {def.clear !== undefined && (
+              {effectiveClear(slot) !== undefined && (
                 <div
                   className="wound"
                   title={`${slot.damage} of ${clear} damage`}
                 >
-                  <div
-                    style={{
-                      width: `${Math.min(100, (slot.damage / clear) * 100)}%`,
-                    }}
-                  />
+                  {/* Pips, not a bar: "two of five" is the number a player is
+                   * deciding against — whether one more card finishes it. A
+                   * bar makes them estimate that. */}
+                  <Pips now={slot.damage} max={clear} tone="hurt small" />
                 </div>
               )}
               {slot.menaceCancelled && (
                 <div className="hush">silenced this round</div>
               )}
+              <button
+                className="lens"
+                title="Look at this Threat closely"
+                aria-label={`Look closely at ${def.name}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onZoom(def, slot);
+                }}
+              >
+                <LensMark />
+              </button>
             </div>
           );
         })}
@@ -1231,11 +1369,13 @@ function MarketPanel({
   buys,
   onPlay,
   onClose,
+  onZoom,
 }: {
   v: ClientState;
   buys: Command[];
   onPlay: (c: Command) => void;
   onClose: () => void;
+  onZoom: (def: Card, fevered: boolean) => void;
 }) {
   const [tab, setTab] = useState<"provisions" | "signs">("provisions");
   const ids =
@@ -1277,6 +1417,7 @@ function MarketPanel({
                 actions={buy ? [{ cmd: buy, label: "Buy" }] : []}
                 onPlay={onPlay}
                 onPick={buy ? () => onPlay(buy) : undefined}
+                onZoom={() => onZoom(card(id), false)}
                 market
               />
             );
@@ -1292,10 +1433,12 @@ function Posse({
   v,
   canTarget,
   onTarget,
+  bots,
 }: {
   v: ClientState;
   canTarget: (k: string) => boolean;
   onTarget: (k: string) => void;
+  bots: PlayerId[];
 }) {
   /** The Vessel is named by its own key, not by the player id. */
   const keyFor = (id: string) =>
@@ -1323,20 +1466,23 @@ function Posse({
             >
               <div className="top">
                 <strong>{o.name}</strong>
+                {bots.includes(o.id) && <BotTag />}
+                {/* One chip for what the seat IS — StatusChip covers the
+                    Vessel now, so the separate "the Vessel" chip that used to
+                    sit beside `oldOne` is gone. */}
                 {o.status !== "posse" && <StatusChip status={o.status} />}
                 {o.role === "marked" && (
                   <span className="chip sign">
                     <Icon name="marked" size={12} /> Marked
                   </span>
                 )}
-                {v.vessel === o.id && (
-                  <span className="chip sign">
-                    <Icon name="vessel" size={12} /> the Vessel
-                  </span>
-                )}
               </div>
               <div className="vitals">
-                {o.deckCount} deck · {o.handCount} hand
+                <span className="stat" title={vitalsTitle(o)}>
+                  <Icon name="kit" size={13} />
+                  {cardsLeft(o)} left
+                </span>{" "}
+                · {o.handCount} in hand
                 {o.signsHeld ? (
                   <>
                     {" "}
@@ -1367,7 +1513,59 @@ function Posse({
   );
 }
 
+/**
+ * Everything a player still has, which in this game is their life.
+ *
+ * Deck-as-health (DESIGN.md §5): you fall when you would draw and cannot, and
+ * `refill` shuffles the discard back under you first — so what is keeping
+ * somebody standing is the deck PLUS the discard, plus the hand that joins the
+ * discard at the end of their turn. The draw pile alone says nothing: a player
+ * showing "2 deck" may have twenty cards and be perfectly safe.
+ *
+ * The boneyard is the one pile that does not come back, so it is not counted.
+ */
+function cardsLeft(p: {
+  deckCount: number;
+  handCount: number;
+  discard: unknown[];
+}): number {
+  return p.deckCount + p.handCount + p.discard.length;
+}
+
+function vitalsTitle(p: {
+  deckCount: number;
+  handCount: number;
+  discard: unknown[];
+  boneyard: unknown[];
+}): string {
+  return (
+    `${p.deckCount} in the deck, ${p.discard.length} in the discard, ` +
+    `${p.handCount} in hand — all of it comes back around` +
+    (p.boneyard.length ? `. ${p.boneyard.length} gone for good.` : ".")
+  );
+}
+
 /** What has become of someone, said once rather than in two places. */
+/**
+ * What a seat IS, in one chip.
+ *
+ * Labelled, not printed raw. This used to render the status string straight
+ * out of the engine, so a possessed seat was tagged `oldOne` — the camelCase
+ * identifier — beside a second chip reading "the Vessel". Two tags on one seat,
+ * with no difference between them because there is no difference: the Vessel
+ * is the player and the Old One is what is using them.
+ *
+ * There is one chip now and it is this one. Anything that wants to say "this
+ * seat is the Vessel" says it here, and the label map is the only place the
+ * word is written.
+ */
+const STATUS_LABEL: Record<string, string> = {
+  vessel: "the Vessel",
+  revenant: "Revenant",
+  gone: "gone",
+  posse: "posse",
+};
+
 function StatusChip({
   status,
 }: {
@@ -1377,8 +1575,9 @@ function StatusChip({
 }) {
   const ico = iconForStatus(status);
   return (
-    <span className="chip bad">
-      {ico && <Icon name={ico} size={12} />} <Rules text={status} />
+    <span className={`chip ${status === "vessel" ? "sign" : "bad"}`}>
+      {ico && <Icon name={ico} size={12} />}{" "}
+      <Rules text={STATUS_LABEL[status] ?? status} />
     </span>
   );
 }
@@ -1422,7 +1621,24 @@ function SelfSeat({
         )}
       </div>
       <div className="vitals">
-        {me.deckCount} deck · {me.hand.length} hand
+        <span
+          className="stat"
+          title={vitalsTitle({
+            deckCount: me.deckCount,
+            handCount: me.hand.length,
+            discard: me.discard,
+            boneyard: me.boneyard,
+          })}
+        >
+          <Icon name="kit" size={13} />
+          {cardsLeft({
+            deckCount: me.deckCount,
+            handCount: me.hand.length,
+            discard: me.discard,
+          })}{" "}
+          left
+        </span>{" "}
+        · {me.hand.length} in hand
         {me.scars ? (
           <>
             {" "}
@@ -1448,6 +1664,9 @@ function Hand({
   buyable,
   drag,
   onDrag,
+  onZoom,
+  dealNonce,
+  holdDeal,
 }: {
   v: ClientState;
   byUid: Map<string, Command[]>;
@@ -1458,8 +1677,50 @@ function Hand({
   buyable: number;
   drag: Drag | null;
   onDrag: (d: Drag | null) => void;
+  onZoom: (def: Card, fevered: boolean) => void;
+  /** Bumped to deal the current hand again, once the Dusk report is closed. */
+  dealNonce: number;
+  /**
+   * Do not show the hand yet.
+   *
+   * The Dusk batch deals the next hand along with everything else, so the cards
+   * were lying face up behind the report — dimly, through the scrim, and fully
+   * the moment it closed. Animating them afterwards only replayed something the
+   * player had already been shown.
+   */
+  holdDeal: boolean;
 }) {
   const me = v.you!;
+
+  /**
+   * Cards that were not in the hand a moment ago.
+   *
+   * React keys the fan by uid, so a newly dealt card mounts and an untouched
+   * one does not — but every card in a fresh hand mounts in the SAME commit,
+   * which is why they all appeared at once. Numbering the arrivals lets each
+   * one wait its turn.
+   *
+   * Tracked against the previous hand rather than a set of everything ever
+   * seen: a card goes to the discard, gets shuffled back and is drawn again
+   * under the same uid, and the second time it is new again.
+   */
+  const inHand = me.hand.map((ci) => ci.uid);
+  const previous = useRef<{ nonce: number; uids: string[] }>({
+    nonce: dealNonce,
+    uids: [],
+  });
+  // A new nonce means "deal this hand again": every card counts as an arrival,
+  // and the fan below is keyed by it so they remount and animate.
+  const replay = previous.current.nonce !== dealNonce;
+  const arrivals = replay
+    ? inHand
+    : inHand.filter((uid) => !previous.current.uids.includes(uid));
+  useEffect(() => {
+    // While held, forget nothing: the hand behind the report must still count
+    // as new when it is finally shown.
+    if (holdDeal) return;
+    previous.current = { nonce: dealNonce, uids: inHand };
+  });
   return (
     <section className="hand">
       <div className="hand-head">
@@ -1483,6 +1744,8 @@ function Hand({
             n={me.boneyard.length}
             cards={me.boneyard}
             hint={GLOSSARY.boneyard.long}
+            omenMenace={v.omenMenace}
+            onZoom={onZoom}
           />
           {me.scars > 0 && (
             <Pile
@@ -1499,24 +1762,33 @@ function Hand({
        * table in front of you. The two piles are the same object the rules
        * care about, so they are cards here and not buttons. */}
       <div className="hand-row">
-        <DeckStack n={me.deckCount} cards={me.deck} />
-        <div className="fan">
-          {me.hand.map((ci) => (
-            <PlayCard
-              key={ci.uid}
-              def={card(ci.cardId)}
-              fevered={ci.fevered}
-              dim={!yours}
-              actions={(byUid.get(ci.uid) ?? []).map((cmd) => ({
-                cmd,
-                label: labelFor(cmd),
-              }))}
-              onPlay={onPlay}
-              drag={dragOf(ci.uid, byUid)}
-              onDrag={onDrag}
-            />
-          ))}
-          {!me.hand.length && (
+        <DeckStack
+          n={me.deckCount}
+          cards={me.deck}
+          omenMenace={v.omenMenace}
+          onZoom={onZoom}
+        />
+        <div className="fan" key={dealNonce}>
+          {holdDeal
+            ? null
+            : me.hand.map((ci) => (
+                <PlayCard
+                  key={ci.uid}
+                  def={card(ci.cardId)}
+                  fevered={ci.fevered}
+                  dim={!yours}
+                  actions={(byUid.get(ci.uid) ?? []).map((cmd) => ({
+                    cmd,
+                    label: labelFor(cmd),
+                  }))}
+                  onPlay={onPlay}
+                  dealt={arrivals.indexOf(ci.uid) * DEAL_STAGGER_MS}
+                  drag={dragOf(ci, byUid)}
+                  onDrag={onDrag}
+                  onZoom={() => onZoom(card(ci.cardId), ci.fevered)}
+                />
+              ))}
+          {!holdDeal && !me.hand.length && (
             <span
               style={{
                 display: "flex",
@@ -1541,7 +1813,11 @@ function Hand({
             grit={me.grit}
             buyable={buyable}
           />
-          <DiscardPile cards={me.discard} />
+          <DiscardPile
+            cards={me.discard}
+            omenMenace={v.omenMenace}
+            onZoom={onZoom}
+          />
         </div>
       </div>
     </section>
@@ -1577,7 +1853,11 @@ function Counter({
       <button
         className={`counter ${takes ? "takes" : ""} ${over && takes ? "over" : ""}`}
         onClick={onOpen}
-        title="Drop a card here to cash it in. Click to open the market."
+        title={
+          takes
+            ? `Cash this card in for ${drag!.worth} Grit`
+            : "Drop a card here to cash it in. Click to open the market."
+        }
         onDragOver={
           takes
             ? (e) => {
@@ -1599,7 +1879,11 @@ function Counter({
       >
         <Icon name="grit" size={26} />
         <span className="cta">
-          {takes ? "cash it in" : buyable ? `market · ${buyable}` : "market"}
+          {takes
+            ? `cash in for ${drag!.worth} Grit`
+            : buyable
+              ? `market · ${buyable}`
+              : "market"}
         </span>
       </button>
       <div className="pilelabel">
@@ -1617,7 +1901,17 @@ function Counter({
  * says more than a number going down. The contents open on a click — you built
  * this deck and may review it — but never the order.
  */
-function DeckStack({ n, cards }: { n: number; cards: CardInstance[] }) {
+function DeckStack({
+  n,
+  cards,
+  omenMenace,
+  onZoom,
+}: {
+  n: number;
+  cards: CardInstance[];
+  omenMenace: number;
+  onZoom: (def: Card, fevered: boolean) => void;
+}) {
   const [open, setOpen] = useState(false);
   // Four leaves at a full deck, one when it is nearly over.
   const layers = Math.max(1, Math.min(4, Math.ceil(n / 4)));
@@ -1642,9 +1936,14 @@ function DeckStack({ n, cards }: { n: number; cards: CardInstance[] }) {
         <Term k="deck">Deck</Term> <strong>{n}</strong>
       </div>
       {open && n > 0 && (
-        <div className="pilelist left" onClick={() => setOpen(false)}>
-          <Listing cards={cards} />
-        </div>
+        <PileSheet
+          title="Your deck"
+          hint="Everything still to come, in alphabetical order — never the order you will draw it in."
+          cards={cards}
+          omenMenace={omenMenace}
+          onZoom={onZoom}
+          onClose={() => setOpen(false)}
+        />
       )}
     </div>
   );
@@ -1657,7 +1956,15 @@ function DeckStack({ n, cards }: { n: number; cards: CardInstance[] }) {
  * tell about what you just did. Desaturated because it is out of play — the
  * eye should find the hand first, every time.
  */
-function DiscardPile({ cards }: { cards: CardInstance[] }) {
+function DiscardPile({
+  cards,
+  omenMenace,
+  onZoom,
+}: {
+  cards: CardInstance[];
+  omenMenace: number;
+  onZoom: (def: Card, fevered: boolean) => void;
+}) {
   const [open, setOpen] = useState(false);
   const top = cards[cards.length - 1];
   const def = top ? card(top.cardId) : null;
@@ -1683,25 +1990,107 @@ function DiscardPile({ cards }: { cards: CardInstance[] }) {
         Discard <strong>{cards.length}</strong>
       </div>
       {open && (
-        <div className="pilelist" onClick={() => setOpen(false)}>
-          <Listing cards={cards} />
-        </div>
+        <PileSheet
+          title="Your discard"
+          hint="Played and spent. It all comes back when the deck runs dry."
+          cards={cards}
+          omenMenace={omenMenace}
+          onZoom={onZoom}
+          onClose={() => setOpen(false)}
+        />
       )}
     </div>
   );
 }
 
-/** A pile's contents, counted rather than repeated. */
-function Listing({ cards }: { cards: CardInstance[] }) {
+/**
+ * A pile, spread out on the table.
+ *
+ * This was a text list in a small popover, which asked the player to translate
+ * "Salt Line at the Door ×2" back into the card they actually know by its face.
+ * A pile is a stack of cards; opening it should show cards.
+ *
+ * **Alphabetical, and that is a rule rather than a preference.** The deck is in
+ * here, and its order is secret — sorting by anything the game decides (draw
+ * order, when it was acquired) would leak it through the back door. Alphabetical
+ * is information the player already has, so it cannot leak anything, and it is
+ * also the only order in which you can find a specific card without reading
+ * every one.
+ *
+ * Every copy is drawn, not collapsed to a count. Deck-as-health means eight
+ * Saddlebags is a fact about your position, and eight faces in a row says it
+ * more directly than "×8" does — the same way it would look spread on a table.
+ */
+function PileSheet({
+  title,
+  hint,
+  cards,
+  omenMenace,
+  onZoom,
+  onClose,
+}: {
+  title: string;
+  hint?: string;
+  cards: CardInstance[];
+  omenMenace: number;
+  onZoom: (def: Card, fevered: boolean) => void;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [onClose]);
+
+  /*
+    Sorted by the name actually PRINTED on the face, which for a Fevered Sign is
+    its Fevered name — "The Line Has Been Crossed", not "Salt Line at the Door".
+    Sorting by `card().name` instead would produce a grid that looks unsorted to
+    the only person reading it. `faceOf` is the one translation point between a
+    rule and a face, so the sort key comes from there rather than being worked
+    out a second time here.
+
+    localeCompare, so an apostrophe or an accent does not throw a card to one end.
+  */
+  const sorted = [...cards]
+    .map((ci) => ({ ci, def: card(ci.cardId) }))
+    .map((e) => ({ ...e, face: faceOf(e.def, e.ci.fevered, { omenMenace }) }))
+    .sort((a, b) => a.face.title.localeCompare(b.face.title));
+
   return (
-    <>
-      {tally(cards).map(([id, count]) => (
-        <span key={id}>
-          {card(id).name}
-          {count > 1 ? ` ×${count}` : ""}
-        </span>
-      ))}
-    </>
+    <div className="sheet" onClick={onClose}>
+      <div
+        className="sheet-inner pilesheet"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="sheet-head">
+          <h1>{title}</h1>
+          <span className="pilesheet-count">
+            {cards.length} card{cards.length === 1 ? "" : "s"}
+          </span>
+          <button style={{ marginLeft: "auto" }} onClick={onClose}>
+            Close
+          </button>
+        </div>
+        {hint && <p className="pilesheet-note">{hint}</p>}
+        <div className="shelf">
+          {sorted.length === 0 ? (
+            <p className="pilesheet-note">Nothing in here.</p>
+          ) : (
+            sorted.map(({ ci, def, face }) => (
+              <button
+                key={ci.uid}
+                className="shelfcard"
+                onClick={() => onZoom(def, ci.fevered)}
+                title="Look closer"
+              >
+                <CardFace {...face} width={132} />
+              </button>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1716,15 +2105,20 @@ function Listing({ cards }: { cards: CardInstance[] }) {
  */
 interface Drag {
   uid: string;
+  /** The card's Grit value, so the counter can name its price. */
+  worth: number;
   /** The commands this card actually has, taken from `legal`. */
   play: Command | null;
   cash: Command | null;
 }
 
-function dragOf(uid: string, byUid: Map<string, Command[]>): Drag {
-  const cmds = byUid.get(uid) ?? [];
+function dragOf(ci: CardInstance, byUid: Map<string, Command[]>): Drag {
+  const cmds = byUid.get(ci.uid) ?? [];
   return {
-    uid,
+    uid: ci.uid,
+    // What the counter will pay for it. Carried on the drag because the counter
+    // never learns which card is over it — only that something is.
+    worth: card(ci.cardId).grit,
     play: cmds.find((c) => c.t === "PLAY_CARD") ?? null,
     cash: cmds.find((c) => c.t === "SPEND_GRIT") ?? null,
   };
@@ -1748,6 +2142,8 @@ function PlayCard({
   drag,
   onDrag,
   onPick,
+  onZoom,
+  dealt,
 }: {
   def: Card;
   fevered: boolean;
@@ -1766,6 +2162,10 @@ function PlayCard({
    * play it or cash it in — which is exactly why that one is dragged instead.
    */
   onPick?: () => void;
+  /** Look at this card closely. Its own control, not another meaning for click. */
+  onZoom?: () => void;
+  /** Milliseconds to wait before landing. Negative for a card already here. */
+  dealt?: number;
 }) {
   const playable = actions.length > 0;
   const canDrag = !!drag && (!!drag.play || !!drag.cash);
@@ -1786,6 +2186,11 @@ function PlayCard({
       tabIndex={onPick ? 0 : undefined}
       onClick={onPick}
       onKeyDown={onPick ? (e) => e.key === "Enter" && onPick() : undefined}
+      style={
+        dealt !== undefined && dealt >= 0
+          ? { animationDelay: `${dealt}ms` }
+          : undefined
+      }
       draggable={canDrag}
       onDragStart={
         canDrag
@@ -1800,7 +2205,20 @@ function PlayCard({
       }
       onDragEnd={canDrag ? () => onDrag?.(null) : undefined}
     >
-      <CardFace {...faceOf(def, fevered, { market })} width={width ?? 147} />
+      <CardFace {...faceOf(def, fevered, { market })} width={width ?? 120} />
+      {onZoom && (
+        <button
+          className="lens"
+          title="Look at this card closely"
+          aria-label={`Look closely at ${def.name}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onZoom();
+          }}
+        >
+          <LensMark />
+        </button>
+      )}
       {/* Buttons are the keyboard path, not the mouse one: hidden until the
        * card is focused, so tabbing still reaches every move while a pointer
        * user gets an uncluttered card to drag. */}
@@ -1823,12 +2241,16 @@ function Pile({
   n,
   cards,
   hint,
+  omenMenace,
+  onZoom,
 }: {
   label: string;
   icon?: IconName;
   n: number;
   cards?: CardInstance[];
   hint?: string;
+  omenMenace?: number;
+  onZoom?: (def: Card, fevered: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
   const can = !!cards?.length;
@@ -1843,9 +2265,14 @@ function Pile({
         {icon && <Icon name={icon} size={12} />} {label} <strong>{n}</strong>
       </button>
       {open && can && (
-        <div className="pilelist">
-          <Listing cards={cards!} />
-        </div>
+        <PileSheet
+          title={label}
+          hint={hint}
+          cards={cards!}
+          omenMenace={omenMenace ?? 0}
+          onZoom={onZoom ?? (() => {})}
+          onClose={() => setOpen(false)}
+        />
       )}
     </div>
   );
@@ -1858,6 +2285,150 @@ function Pile({
  * edit it by hand — anything added there is lost on the next run. If a cog is
  * ever cut properly, swap this for <Icon name="cog" /> and delete it.
  */
+/** A magnifier. Drawn here for the same reason as the cog and the bot below. */
+function LensMark({ size = 13 }: { size?: number }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="square"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <circle cx="10.5" cy="10.5" r="6.2" />
+      <path d="M15.2 15.2L20 20" />
+    </svg>
+  );
+}
+
+/**
+ * One card, big, with the rules its symbols stand for.
+ */
+function CardZoom({
+  def,
+  fevered,
+  slot,
+  omenMenace,
+  onClose,
+}: {
+  def: Card;
+  fevered: boolean;
+  slot?: StreetSlot;
+  omenMenace: number;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [onClose]);
+
+  const keys = cardKeywords(def, fevered, slot);
+  const turning = def.fevered && !fevered;
+
+  return (
+    <div className="sheet zoom" onClick={onClose}>
+      <div className="sheet-inner" onClick={(e) => e.stopPropagation()}>
+        <div className="zoom-body">
+          <div className="zoom-card">
+            <CardFace
+              {...faceOf(def, fevered, { slot, omenMenace })}
+              width={330}
+            />
+            {slot && (
+              <p className="muted">
+                Standing in the Street: {slot.damage} damage taken
+                {slot.escalation > 0 &&
+                  `, and worse by ${slot.escalation} for
+                  every Dusk it has survived`}
+                .
+              </p>
+            )}
+          </div>
+
+          <div className="zoom-terms">
+            {turning && (
+              <div className="zoom-turn">
+                <h2>
+                  At the <Term k="turning">Turning</Term>
+                </h2>
+                <p>
+                  <strong>{def.fevered!.name}</strong> —{" "}
+                  <Rules text={describeOps(opsFor(def, true))} />
+                </p>
+              </div>
+            )}
+            <h2>What the marks mean</h2>
+            <dl>
+              {keys.map((k) => (
+                <div key={k}>
+                  <dt>
+                    {TERM_ICONS[k] && <Icon name={TERM_ICONS[k]} size={15} />}
+                    {GLOSSARY[k]!.term}
+                  </dt>
+                  <dd>
+                    <strong>{GLOSSARY[k]!.short}</strong>{" "}
+                    <Rules text={GLOSSARY[k]!.long} />
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        </div>
+
+        <div className="opts">
+          <button className="primary" onClick={onClose}>
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A bot, drawn here for the same reason as the cog below.
+ *
+ * `components/iconsgen.ts` is generated by assets/build_icons.py and anything
+ * added by hand is lost on the next run. Cut a real one and this becomes
+ * `<Icon name="bot" />`.
+ *
+ * Drawn to the set's grammar so it does not read as a foreign object: a 24 box,
+ * currentColor, 1.6 stroke, square caps.
+ */
+function BotMark({ size = 13 }: { size?: number }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="square"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <rect x="4.6" y="8.4" width="14.8" height="11" />
+      <path d="M12 4.4v4M9.4 12.6v2.2M14.6 12.6v2.2" />
+      <circle cx="12" cy="3.6" r="1.3" />
+    </svg>
+  );
+}
+
+/** A seat nobody is driving, said the same way everywhere it is said. */
+function BotTag({ size = 13 }: { size?: number }) {
+  return (
+    <span className="bottag" title="Played by a bot">
+      <BotMark size={size} /> bot
+    </span>
+  );
+}
+
 function Cog() {
   return (
     <svg
@@ -1887,17 +2458,102 @@ function Cog() {
  */
 function SettingsPanel({
   s,
+  handSize: fromView,
   onClose,
 }: {
   s: SoundSettings;
+  /** From the view when there is one. */
+  handSize: number | undefined;
   onClose: () => void;
 }) {
+  /**
+   * A sound test must not depend on the server.
+   *
+   * It did, and a server that had not yet learned to send `handSize` made the
+   * "Deal a hand" button silent — the one button whose whole job is telling you
+   * whether silence means broken. The content is bundled with the client, so
+   * the fallback is always there.
+   */
+  const handSize = fromView ?? TUNING.handSize;
   const demo = useRef<CoinPool | null>(null);
+  const demoCards = useRef<CardSounds | null>(null);
+  const level = s.muted ? 0 : s.effects;
+
   const tryIt = () => {
-    if (s.muted || s.effects <= 0) return;
+    if (level <= 0) return;
     demo.current ??= createCoinPool();
-    demo.current.play(s.effects);
+    demo.current.play(level);
   };
+
+  /**
+   * Hear one effect on demand.
+   *
+   * Each of these fires the SAME path the game uses — the card sounds are
+   * driven by feeding `hear` the events the engine would emit, not by calling
+   * a clip directly. A button that plays the file regardless would happily
+   * sound while the wiring behind it was broken, which is the one thing it is
+   * here to detect.
+   */
+  const hear = (events: GameEvent[]) => {
+    if (level <= 0) return;
+    demoCards.current ??= createCardSounds();
+    demoCards.current.hear(events, "p0", level, handSize);
+  };
+
+  const EFFECTS: [string, () => void][] = [
+    ["Coin", tryIt],
+    [
+      "Sign bought",
+      () => {
+        if (level <= 0) return;
+        demo.current ??= createCoinPool();
+        demo.current.sign(level);
+      },
+    ],
+    ["Shuffle", () => hear([{ t: "RESHUFFLED", player: "p0", n: 9 }])],
+    ["Draw", () => hear([{ t: "DREW", player: "p0", n: 1 }])],
+    ["Deal a hand", () => hear([{ t: "DREW", player: "p0", n: handSize }])],
+    [
+      "Discard a card",
+      () => hear([{ t: "DISCARDED", player: "p0", n: 1, hand: false }]),
+    ],
+    [
+      "Discard a hand",
+      () => hear([{ t: "DISCARDED", player: "p0", n: handSize, hand: true }]),
+    ],
+    [
+      "Six-Gun",
+      () =>
+        hear([
+          { t: "PLAYED", player: "p0", cardId: "six-gun", fevered: false },
+          { t: "THREAT_DAMAGED", slot: 0, amount: 1 },
+        ]),
+    ],
+    [
+      "Winchester",
+      () =>
+        hear([
+          { t: "PLAYED", player: "p0", cardId: "winchester", fevered: false },
+          { t: "THREAT_DAMAGED", slot: 0, amount: 2 },
+        ]),
+    ],
+    [
+      "Lantern Oil",
+      () =>
+        hear([
+          { t: "PLAYED", player: "p0", cardId: "lantern-oil", fevered: false },
+          { t: "THREAT_DAMAGED", slot: 0, amount: 2 },
+        ]),
+    ],
+    [
+      "Dynamite",
+      () =>
+        hear([
+          { t: "PLAYED", player: "p0", cardId: "dynamite", fevered: false },
+          { t: "THREAT_CLEARED", slot: 0, cardId: "barons-men" },
+        ]),
+    ],
+  ];
   return (
     <div className="sheet" onClick={onClose}>
       <div className="sheet-inner narrow" onClick={(e) => e.stopPropagation()}>
@@ -1938,6 +2594,21 @@ function SettingsPanel({
             onChange={(effects) => s.set({ effects })}
             onSettle={tryIt}
           />
+
+          <div className="hearit">
+            <span className="name">Hear one</span>
+            <div className="row">
+              {EFFECTS.map(([label, play]) => (
+                <button key={label} disabled={level <= 0} onClick={play}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            <p className="hint">
+              Each plays through the same path the game uses, so a silent button
+              means the wiring is broken and not just the volume.
+            </p>
+          </div>
         </div>
       </div>
     </div>
@@ -2007,12 +2678,6 @@ function GlossaryPanel({ onClose }: { onClose: () => void }) {
 
 // ------------------------------------------------------------------ utils
 
-function tally(cards: CardInstance[]): [string, number][] {
-  const m = new Map<string, number>();
-  for (const c of cards) m.set(c.cardId, (m.get(c.cardId) ?? 0) + 1);
-  return [...m.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
-}
-
 /**
  * A engine Card, as a face.
  *
@@ -2026,6 +2691,19 @@ function faceOf(
   opts: {
     /** On the shelf you need the price; in your hand you need what it is worth. */
     market?: boolean;
+    /**
+     * The Street slot this card is standing in, if it is standing in one.
+     *
+     * Clear and Menace are printed on the card but LIVED on the slot: a Threat
+     * left standing gains a step every Dusk, and that lives in
+     * `StreetSlot.escalation` because `Card` is a template shared by every copy
+     * — including the ones still face down. Without the slot this drew the
+     * printed numbers for ever, so a Threat that had grown from Clear 4 to 6
+     * still read 4 and the wound bar filled against the wrong total.
+     */
+    slot?: StreetSlot;
+    /** Needed to read an Omen's Menace, which is a TUNING value, not printed. */
+    omenMenace?: number;
   } = {},
 ): CardFaceProps {
   const isSign = def.type === "sign";
@@ -2041,18 +2719,23 @@ function faceOf(
     cost: opts.market ? def.cost : undefined,
     value: opts.market || threat || def.type === "omen" ? undefined : def.grit,
     body:
-      describeOps(opsFor(def, fevered)) ||
-      (def.passive ? "A standing promise." : "—"),
-    // On the shelf, what a Sign becomes is the whole decision.
+      // Empty, not a dash, when there is genuinely nothing. Every Threat has no
+      // `ops` — Clear, Menace, Bounty and Toll are their own fields — so a
+      // placeholder here put a stray em-dash on every card in the Street.
+      thirdLine(def, fevered) || (def.passive ? "A standing promise." : ""),
+    // On the shelf, what a Sign becomes is the whole decision, and it wins the
+    // slot: rules before atmosphere. Everywhere else the card gets its line.
     flavour:
       opts.market && def.fevered
         ? `At the Turning: ${def.fevered.name} — ${describeOps(opsFor(def, true))}`
-        : undefined,
+        : def.flavour,
     footer: FAMILY[def.type],
     mark: iconForCard(def, fevered),
     whispers: def.whispers,
-    clear: def.clear,
-    menace: def.menace,
+    clear: opts.slot ? effectiveClear(opts.slot) : def.clear,
+    menace: opts.slot
+      ? effectiveMenace(opts.slot, opts.omenMenace ?? 0)
+      : def.menace,
   };
 }
 
@@ -2064,63 +2747,9 @@ const FAMILY: Record<Card["type"], string> = {
   trouble: "Trouble",
   omen: "Omen",
   mythos: "Mythos",
+  vessel: "The Vessel",
 };
 
-/** Rules text derived from the ops, so a card can never lie about itself. */
-function describeOps(ops: readonly Op[]): string {
-  return ops
-    .map((op) => {
-      switch (op.op) {
-        case "draw":
-          return `Draw ${op.n}`;
-        case "damage":
-          return op.target === "vessel"
-            ? `${op.n} damage to the Vessel`
-            : `${op.n} damage`;
-        case "destroy":
-          return "Destroy a Threat";
-        case "grit":
-          return `+${op.n} Grit`;
-        case "gritNextTurn":
-          return `+${op.n} Grit next turn`;
-        case "actions":
-          return `+${op.n} actions`;
-        case "whisper":
-          return `+${op.n} Whisper`;
-        case "trash":
-          return op.target === "self"
-            ? `Trash ${op.n} of your own`
-            : `Everyone trashes ${op.n}`;
-        case "gainCard":
-          return "Take a Provision free";
-        case "recover":
-          return "Recover a card";
-        case "cancelMenace":
-          return "Cancel a Threat's Menace";
-        case "shield":
-          return `Prevent ${op.n} damage`;
-        case "discardHand":
-          return "Discard your hand";
-        case "revealHand":
-          return "Reveal your hand";
-        case "scry":
-          return `Look at the next ${op.n} Threats`;
-        default:
-          return (op as { op: string }).op;
-      }
-    })
-    .join(" · ");
-}
-
-/**
- * What a button does, from the player's side of the table.
- *
- * "Spend" was wrong on the one command it mattered for. SPEND_GRIT does not
- * spend Grit — it turns the card INTO Grit, which is the only way to get any.
- * Reading it the natural way ("spend Grit on this card") had the trade running
- * backwards, so the label now names the direction and the yield: the card goes,
- * this much Grit arrives.
- */
 function labelFor(c: Command): ReactNode {
   switch (c.t) {
     case "PLAY_CARD":
@@ -2137,14 +2766,6 @@ function labelFor(c: Command): ReactNode {
       return "Whisper";
     case "BECKON":
       return `Beckon ${c.target}`;
-    case "SHUTTER":
-      return `Shut the way to ${c.cardType}`;
-    case "OFFER":
-      return `Offer ${card(c.cardId).name}`;
-    case "SUMMON":
-      return "Summon";
-    case "CALL":
-      return `Call ${c.target}`;
     default:
       return c.t;
   }

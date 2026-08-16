@@ -24,10 +24,11 @@
     "noUnusedParameters": true
   },
   "include": [
-    "src",
-    "../engine",
     "../content",
+    "../engine",
     "../server/protocol.ts",
-    "../tests/ambience.test.ts"
+    "../tests/ambience.test.ts",
+    "../tests/cardsounds.test.ts",
+    "src"
   ]
 }

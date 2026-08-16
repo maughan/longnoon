@@ -61,6 +61,26 @@ someone couldn't resist*, not on a timer.
 
 **Finale.** Burying the Vessel.
 
+### The Vessel is the player. The Old One is the fiction.
+
+They are one entity described at two layers, and **only the player layer is
+allowed in the interface.**
+
+- The **VESSEL** is a status, a seat, a tag in the player list, a thing you can
+  shoot. This is the only word that appears in rules text, in the player list,
+  in the state, or anywhere in the UI.
+- The **OLD ONE** is what is *using* the Vessel. It is never a player, never a
+  status, never a tag, and never appears in the player list. It is what the
+  Doom track counts and what came through the door at the Turning. You never
+  interact with it directly, so it does not need a seat.
+
+The posse's win condition already says this out loud: they **bury the Vessel** —
+a body. Closing the door is not killing the thing behind it.
+
+The one place the old name belongs is **the Turning**, which is the moment the
+Old One arrives. Naming it once, at possession, and never again in the
+interface, is the correct amount.
+
 Variant worth testing: run with **no Marked player at all** and don't tell anyone.
 The thing wakes on its own, plays worse, but wakes angrier. Players never know
 which game they're in.

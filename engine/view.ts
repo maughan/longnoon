@@ -1,5 +1,5 @@
 import type { GameState, PlayerId, CardInstance, Role, Status } from './state';
-import { signsHeld, deckSize } from './effects';
+import { signsHeld, deckSize, doomForFill } from './effects';
 
 export interface OpponentView {
   id: PlayerId;
@@ -23,8 +23,21 @@ export interface ClientState {
   phase: GameState['phase'];
   activePlayer: PlayerId;
   actionsLeft: number;
+  /** The Whisper bar. Always in `[0, whisperThreshold)`. */
   whispers: number;
+  /** Where the bar tops out. The same in both acts, deliberately. */
   whisperThreshold: number;
+  /** How many times it has filled in Act II. Zero before the Turning. */
+  whisperFills: number;
+  /**
+   * What the NEXT fill will cost, already worked out.
+   *
+   * Sent rather than left to the client to derive from `doomPerFill +
+   * whisperFills * doomPerFillStep`. A client deriving a rule is the drift
+   * tech-spec.md §4 exists to prevent, and the escalation is precisely the
+   * thing the bar needs to say out loud.
+   */
+  nextFillDoom: number;
   doom: number;
   doomTarget: number;
   vessel: PlayerId | null;
@@ -38,6 +51,21 @@ export interface ClientState {
    * fill the burial track, see 16/16, and watch nothing happen.
    */
   vesselClear: number;
+  /**
+   * What an Omen menaces for.
+   *
+   * Omens print 0 and take their real value from TUNING, so a client without
+   * this draws every Omen as harmless. Public, like every other threshold here.
+   */
+  omenMenace: number;
+  /**
+   * How many cards a full hand is.
+   *
+   * Public, and needed to tell a whole hand being dealt from a card being
+   * drawn mid-turn — a distinction the client would otherwise have to make
+   * with a magic 5.
+   */
+  handSize: number;
   street: GameState['street'];
   provisionRow: CardInstance[];
   provisionsLeft: number;
@@ -76,7 +104,7 @@ export function playerView(s: GameState, viewer: PlayerId | 'spectator'): Client
       return {
         id, name: p.name, status: p.status,
         // Role visibility is derived, never a mutation - or replays break.
-        role: revealed.has(id) || p.status === 'oldOne' ? p.role : null,
+        role: revealed.has(id) || p.status === 'vessel' ? p.role : null,
         handCount: p.hand.length,
         deckCount: p.deck.length,
         discard: p.discard,
@@ -95,6 +123,8 @@ export function playerView(s: GameState, viewer: PlayerId | 'spectator'): Client
     round: s.round, act: s.act, phase: s.phase,
     activePlayer: s.activePlayer, actionsLeft: s.actionsLeft,
     whispers: s.whispers, whisperThreshold: s.tuning.whisperThreshold,
+    whisperFills: s.whisperFills,
+    nextFillDoom: doomForFill(s, s.whisperFills + 1),
     doom: s.doom, doomTarget: s.tuning.doomTarget,
     vessel: s.vessel, vesselDamage: s.vesselDamage,
     street: s.street,
@@ -103,6 +133,8 @@ export function playerView(s: GameState, viewer: PlayerId | 'spectator'): Client
     pending: s.pending && s.pending.player === viewer ? s.pending : null,
     winner: s.winner,
     vesselClear: s.tuning.vesselClear,
+    omenMenace: s.tuning.omenMenace,
+    handSize: s.tuning.handSize,
     you: me ? {
       id: me.id, role: me.role, status: me.status,
       hand: me.hand, deckCount: me.deck.length, deck: sortedForReview(me.deck),
@@ -113,11 +145,29 @@ export function playerView(s: GameState, viewer: PlayerId | 'spectator'): Client
   };
 }
 
-/** Canonical order — same multiset in, same array out, whatever the shuffle. */
+/**
+ * Canonical order — same multiset in, same array out, whatever the shuffle.
+ *
+ * The `uid` tiebreak is the load-bearing line, and it was missing.
+ *
+ * `Array.prototype.sort` is stable, so two cards that compare equal keep their
+ * INPUT order — and a deck is mostly duplicates. Sorting on cardId and fevered
+ * alone therefore left every run of identical cards sitting in shuffle order,
+ * which is a trace of exactly the thing this function exists to destroy. It
+ * survived review because the array looks perfectly sorted; only a permutation
+ * test can see it, and the test that claimed to cover this only ever checked
+ * that OPPONENTS' decks were absent.
+ *
+ * `uid` is assigned by a counter when the card is created, so it is stable
+ * across shuffles and cannot carry one. Compared as a string, which is not
+ * creation order once the counter passes 9 — that does not matter, only that
+ * it is a total order fixed independently of the deck.
+ */
 function sortedForReview(deck: CardInstance[]): CardInstance[] {
   return [...deck].sort((a, b) =>
-    a.cardId < b.cardId ? -1 : a.cardId > b.cardId ? 1
-    : Number(a.fevered) - Number(b.fevered));
+    (a.cardId < b.cardId ? -1 : a.cardId > b.cardId ? 1 : 0)
+    || Number(a.fevered) - Number(b.fevered)
+    || (a.uid < b.uid ? -1 : a.uid > b.uid ? 1 : 0));
 }
 
 export { deckSize };

@@ -89,8 +89,8 @@ describe('GameRoom — the authority', () => {
     const evil: Command[] = [
       { t: 'BUY', cardId: 'colt' },                 // no Grit
       { t: 'PAY_TOLL', slot: 0 },                   // nothing there to pay for
-      { t: 'SHUTTER', cardType: 'kit' },            // not the Old One
-      { t: 'OFFER', target: 'p1', cardId: 'colt' }, // not the Old One
+      { t: 'BECKON', target: 'p1' },                // not a Revenant
+      { t: 'REVENANT_WHISPER', uid: 'ghost' },      // not a Revenant
       { t: 'SPEND_GRIT', uids: ['ghost'] },
     ];
     for (const c of evil) {

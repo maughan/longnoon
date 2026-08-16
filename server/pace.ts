@@ -19,7 +19,7 @@ import type { GameEvent } from '../engine/state';
 const ANCHOR = new Set<GameEvent['t']>([
   'PLAYED', 'BOUGHT', 'BECKONED', 'TURNING', 'FELL', 'BURNED_OUT',
   'VESSEL_DAMAGE_RESET', 'GAME_OVER', 'MENACE', 'THREAT_ENTERED',
-  'TOLL_PAID', 'SHUTTERED', 'OFFERED',
+  'TOLL_PAID', 'SHUTTERED', 'OFFERED', 'WHISPER_FILL', 'NAME_READ',
 ]);
 
 /** Events that extend the open sentence, or start one if none is open. */

@@ -183,7 +183,7 @@ describe('Fevered faces', () => {
   it('retarget rewrites the target, not the magnitude', () => {
     const colt = card('colt');
     expect(opsFor(colt, false)[0]).toMatchObject({ op: 'destroy', target: 'choose' });
-    expect(opsFor(colt, true)[0]).toMatchObject({ op: 'destroy', target: 'leftmostSlot' });
+    expect(opsFor(colt, true)[0]).toMatchObject({ op: 'destroy', target: 'itChooses' });
 
     // Retarget on its own never adds or removes an op.
     const parson = card('parson');
@@ -205,7 +205,8 @@ describe('Fevered faces', () => {
       const c = card(id);
       expect(c.fevered, `${id} has no Fevered face`).toBeDefined();
       const f = c.fevered!;
-      const usesSchema = !!(f.retarget || f.appendOps || f.constraints || c.passive);
+      const usesSchema =
+        !!(f.retarget || f.appendOps || f.prependOps || f.constraints || c.passive);
       expect(usesSchema, `${id} needs bespoke code`).toBe(true);
     }
   });
@@ -237,7 +238,7 @@ describe('the Turning', () => {
     const s = trip(start(base()).state);
     expect(s.act).toBe('mythos');
     expect(s.vessel).not.toBeNull();
-    expect(s.players[s.vessel!].status).toBe('oldOne');
+    expect(s.players[s.vessel!].status).toBe('vessel');
   });
 
   it('makes the greediest player the Vessel even when they are not Marked', () => {
@@ -267,16 +268,35 @@ describe('the Turning', () => {
     expect(s.doom).toBe(3);
   });
 
-  it('unlocks the Old One action set', () => {
+  it('gives the Vessel a deck of its own', () => {
     const s = trip(start(base()).state);
-    const legal = legalCommands(s, s.vessel!);
+    // The deck is the point: the Vessel's actions are cards now, so what the
+    // Turning hands over is a deck rather than a menu.
+    const v = s.players[s.vessel!];
+    /*
+      Everything the Vessel holds, wherever it currently sits.
+
+      deck + hand + discard rather than the deck alone: the Turning empties the
+      hand and `startTurn` may already have dealt a fresh one from the new deck
+      by the time this state exists, so a deck-only assertion is really an
+      assertion about whose turn came next.
+
+      Scars are excluded — damage adds them afterwards and they are nobody's
+      design decision.
+    */
+    const own = [...v.deck, ...v.hand, ...v.discard]
+      .filter((ci) => card(ci.cardId).type !== 'scar');
+    expect(own.length).toBeGreaterThan(0);
+    const strays = own
+      .map((ci) => card(ci.cardId))
+      .filter((c) => c.type !== 'vessel' && c.type !== 'sign')
+      .map((c) => `${c.id}:${c.type}`);
+    expect(strays, 'the old posse deck survived the Turning').toEqual([]);
     if (s.activePlayer === s.vessel) {
-      // WHISPER (+2 Doom) is gone: unconditional, free, and it touched no
-      // player, so the seat was a spectator with a counter. What is left all
-      // changes what the posse can do next turn.
-      // WHISPER is gone from the Command union entirely, so the check is that
-      // the set is not empty and is made of the new, conditional moves.
-      expect(legal.some((c) => c.t === 'SHUTTER' || c.t === 'OFFER')).toBe(true);
+      // And the seat is not a spectator: it reaches them through PLAY_CARD,
+      // like anybody else at the table.
+      const legal = legalCommands(s, s.vessel!);
+      expect(legal.some((c) => c.t === 'PLAY_CARD')).toBe(true);
     }
     expect(s.revealedRoles.length).toBeGreaterThan(0);
   });
@@ -294,6 +314,37 @@ describe('hidden information', () => {
       expect(typeof o.handCount).toBe('number');
     }
     expect(JSON.stringify(v)).not.toContain('marked');
+  });
+
+  it('gives you your own deck as contents, carrying no trace of the shuffle', () => {
+    // The half this test's name always claimed and never checked. Opponents'
+    // decks are absent entirely, which is easy; YOUR deck is sent in full,
+    // because a deck builder you cannot review is unplayable — so the order is
+    // the thing that has to be scrubbed, and only a permutation can prove it.
+    //
+    // It matters more now than it did: the client draws this pile as faces in a
+    // grid, so anything surviving here is on screen rather than buried in a
+    // payload.
+    const s = start(base()).state;
+    const mine = playerView(s, 'p0').you!.deck;
+    expect(mine.length).toBeGreaterThan(4);
+
+    for (let cut = 1; cut < 5; cut++) {
+      const rotated = structuredClone(s);
+      const d = rotated.players['p0'].deck;
+      rotated.players['p0'].deck = [...d.slice(cut), ...d.slice(0, cut)];
+      expect(
+        JSON.stringify(playerView(rotated, 'p0').you!.deck),
+        `a cut of ${cut} showed through`,
+      ).toBe(JSON.stringify(mine));
+    }
+
+    // Reversal too — a rotation alone would pass a sort that only fixed the
+    // first card.
+    const flipped = structuredClone(s);
+    flipped.players['p0'].deck = [...flipped.players['p0'].deck].reverse();
+    expect(JSON.stringify(playerView(flipped, 'p0').you!.deck))
+      .toBe(JSON.stringify(mine));
   });
 
   it('reveals roles only after the Turning', () => {

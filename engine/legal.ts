@@ -1,16 +1,11 @@
-import type { GameState, Command, PlayerId, CardType } from './state';
+import type { GameState, Command, PlayerId } from './state';
 import { card, SIGN_IDS } from '../content/cards';
-import { canPay } from './effects';
+import { canPay, shuttered } from './effects';
 
-/** The types the Old One may close off. Threats are not in anyone's hand. */
-const SHUTTERABLE: CardType[] = ['kit', 'deed', 'sign'];
-
-/** Is this card type currently closed off? */
-export function shuttered(s: GameState, type: CardType): boolean {
-  return s.shuttered !== null
-    && s.shuttered.type === type
-    && s.round <= s.shuttered.untilRound;
-}
+// `shuttered` lives in effects.ts now, because the `shutter` OP needs it and
+// effects.ts cannot import from legal.ts. Re-exported so every existing import
+// still resolves.
+export { shuttered };
 
 /**
  * The twofer: this drives button-disabling in React AND defines the action
@@ -64,32 +59,6 @@ export function legalCommands(s: GameState, pid: PlayerId): Command[] {
     }
     for (const id of SIGN_IDS) {
       if ((card(id).cost ?? 99) <= p.gritThisTurn) out.push({ t: 'BUY', cardId: id });
-    }
-  }
-
-  /**
-   * The Old One.
-   *
-   * WHISPER (+2 Doom) is gone. Doom already climbs on its own from Omens and
-   * unresolved Mythos, so it was redundant as well as dominant — an
-   * unconditional move that touched no player and left the seat a spectator
-   * with a counter. Everything here changes what the posse can do next turn.
-   */
-  if (hasAction && p.status === 'oldOne') {
-    s.street.forEach((sl, i) => { if (!sl) out.push({ t: 'SUMMON', slot: i }); });
-    // Ammunition, not a free action: no Whispers, no CALL.
-    if (s.whispers >= s.tuning.callWhisperCost) {
-      for (const other of s.turnOrder) {
-        if (s.players[other].status === 'posse') out.push({ t: 'CALL', target: other });
-      }
-    }
-    for (const type of SHUTTERABLE) {
-      // Re-shuttering the same type it is already under does nothing.
-      if (!shuttered(s, type)) out.push({ t: 'SHUTTER', cardType: type });
-    }
-    for (const other of s.turnOrder) {
-      if (s.players[other].status !== 'posse') continue;
-      for (const id of SIGN_IDS) out.push({ t: 'OFFER', target: other, cardId: id });
     }
   }
 

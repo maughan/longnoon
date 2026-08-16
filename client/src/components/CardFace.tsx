@@ -1,5 +1,12 @@
 import { Icon, type IconName } from "./Icon";
+import {
+  wrapToWidth, titleFont, SERIF,
+  TITLE_X, TITLE_FIRST, TITLE_REST, TITLE_TOP,
+} from "./wrapText";
 import { PALETTE, DREAD, DREAD_ON_DARK, FAINT_OPACITY } from "./palette";
+import type { CardKind } from "./palette";
+
+export type { CardKind };
 
 /**
  * A card face.
@@ -19,16 +26,6 @@ import { PALETTE, DREAD, DREAD_ON_DARK, FAINT_OPACITY } from "./palette";
  * COLOUR IS THE THIRD SIGNAL, after frame and mark. Each family carries two
  * tones - see palette.ts for why text and strokes cannot share one value.
  */
-
-export type CardKind =
-  | "kit"
-  | "deed"
-  | "sign"
-  | "fevered"
-  | "scar"
-  | "trouble"
-  | "omen"
-  | "mythos";
 
 export interface CardFaceProps {
   kind: CardKind;
@@ -60,6 +57,39 @@ export interface CardFaceProps {
 const W = 250;
 const H = 350;
 
+/** The bottom half: rules run down from here, flavour hangs up from the foot. */
+const BODY_TOP = 250;
+const BODY_LEAD = 14;
+const FLAVOUR_BOTTOM = 52;
+const FLAVOUR_LEAD = 12;
+/** The rule under the art, and where flavour sits when it has the half alone. */
+const DIVIDER_Y = 226;
+/**
+ * The middle of the card.
+ *
+ * The field art used to be centred on the space to the RIGHT of the left strip
+ * — x=150 — while the rules, the flavour and the set line are all centred on
+ * the card itself at x=125. Twenty-five units of disagreement, directly above
+ * the text that disagreed with it.
+ */
+const CENTRE = W / 2;
+const ART = 82;
+const FLAVOUR_ALONE = 280;
+
+
+
+/**
+ * Headings are small caps with tracking, not uppercase.
+ *
+ * That is how h1/h2 are set in style.css — "wood-type headings without a
+ * webfont" — and a card shouting in full capitals beside them was the loudest
+ * part of the mismatch.
+ */
+const HEADING = {
+  fontVariantCaps: "small-caps",
+  letterSpacing: "0.07em",
+} as const;
+
 export function CardFace({
   kind,
   title,
@@ -89,6 +119,39 @@ export function CardFace({
 
   // A Fevered card is the same card, marked. The strip and the field must agree
   // about that or it reads as two different cards on one face.
+  /**
+   * The title, wrapped to fit around the corner tag rather than to a character
+   * count. Dropped a size if three lines are needed, so a long name stays on
+   * the card instead of running into the illustration.
+   */
+  // Measured with the very font it will be drawn in, so the wrap and the
+  // rendering cannot disagree about how wide a word is.
+  const fit = (size: number) =>
+    wrapToWidth(title, size, TITLE_FIRST, TITLE_REST, titleFont(size));
+  const titleSize = fit(16).length > 2 ? 14 : 16;
+  const titleLines = fit(titleSize).slice(0, 3);
+
+  /**
+   * The bottom half, shared between the rules and the flavour.
+   *
+   * Rules run down from BODY_TOP; flavour hangs up from the footer. On a wordy
+   * Fevered face the two met — "What the Coyote Told Me" overlapped its own
+   * flavour by six pixels. Rather than trim the writing to fit the worst card,
+   * the flavour steps aside when the rules need the room, which is also the
+   * right precedence: nobody ever needed the atmosphere to make a decision.
+   */
+  const bodyLines = body ? wrap(body, 30) : [];
+  const flavourLines = flavour ? wrap(flavour, 36) : [];
+  // With no rules to print, the flavour has the whole lower half and sits in
+  // it rather than clinging to the footer with a hole above it.
+  const bodyBottom = bodyLines.length
+    ? BODY_TOP + (bodyLines.length - 1) * BODY_LEAD
+    : DIVIDER_Y;
+  const flavourBaseline = bodyLines.length ? H - FLAVOUR_BOTTOM : FLAVOUR_ALONE;
+  const flavourTop = flavourBaseline - (flavourLines.length - 1) * FLAVOUR_LEAD;
+  const showFlavour = flavourLines.length > 0
+    && flavourTop - bodyBottom >= FLAVOUR_LEAD;
+
   const family: IconName = isMark ? (fever ? "fevered" : "sign") : mark;
   const field: IconName = art ?? (isMark ? family : mark);
 
@@ -107,7 +170,9 @@ export function CardFace({
     return at;
   };
   const costY = cost !== undefined ? slot(40) : 0;
-  const familyY = slot(32);
+  // No family mark in the strip any more: the field art in the middle of the
+  // card is the same glyph four times the size. Two of them said one thing
+  // twice, and the strip can give those 32 units to the numbers instead.
   const clearY = clear !== undefined ? slot(48) : 0;
   const menaceY = menace !== undefined ? slot(48) : 0;
   const whisperY = whispers > 0 ? slot(28 + whispers * 15) : 0;
@@ -207,18 +272,12 @@ export function CardFace({
             y={costY + 20}
             textAnchor="middle"
             fill={ink}
-            style={{ font: "bold 17px ui-serif, Georgia, serif" }}
+            style={{ font: `bold 17px ${SERIF}` }}
           >
             {cost}
           </text>
         </>
       )}
-
-      {/* Always. Every card belongs to a family, including the ones with no
-          price — this used to hang off `cost`, so no Threat ever showed one. */}
-      <g transform={`translate(17 ${familyY})`} style={{ color: accent }}>
-        <Icon name={family} size={23} />
-      </g>
 
       {clear !== undefined && (
         <>
@@ -230,7 +289,7 @@ export function CardFace({
             y={clearY + 40}
             textAnchor="middle"
             fill={ink}
-            style={{ font: "bold 15px ui-serif, Georgia, serif" }}
+            style={{ font: `bold 15px ${SERIF}` }}
           >
             {clear}
           </text>
@@ -246,7 +305,7 @@ export function CardFace({
             y={menaceY + 40}
             textAnchor="middle"
             fill={ink}
-            style={{ font: "bold 15px ui-serif, Georgia, serif" }}
+            style={{ font: `bold 15px ${SERIF}` }}
           >
             {menace}
           </text>
@@ -283,7 +342,7 @@ export function CardFace({
             y={H - 22}
             textAnchor="middle"
             fill={ink}
-            style={{ font: "bold 16px ui-serif, Georgia, serif" }}
+            style={{ font: `bold 16px ${SERIF}` }}
           >
             {value}
           </text>
@@ -291,16 +350,13 @@ export function CardFace({
       )}
 
       {/* title, left-aligned so a fan shows its opening letters */}
-      {wrap(title.toUpperCase(), 17).map((line, i, all) => (
+      {titleLines.map((line, i) => (
         <text
           key={i}
-          x={58}
-          y={(all.length === 1 ? 40 : 32) + i * 17}
+          x={TITLE_X}
+          y={TITLE_TOP[titleLines.length - 1]![i]}
           fill={ink}
-          style={{
-            font: "bold 15px ui-sans-serif, system-ui, sans-serif",
-            letterSpacing: "1.1px",
-          }}
+          style={{ font: `600 ${titleSize}px ${SERIF}`, ...HEADING }}
         >
           {line}
         </text>
@@ -311,7 +367,7 @@ export function CardFace({
           y={70}
           fill={ink}
           opacity={FAINT_OPACITY}
-          style={{ font: "italic 9px ui-serif, Georgia, serif" }}
+          style={{ font: `italic 9px ${SERIF}` }}
         >
           {subtitle}
         </text>
@@ -319,63 +375,47 @@ export function CardFace({
 
       {/* field. The icon is a PLACEHOLDER - in production every card wants its
           own illustration. Two threats sharing the claw mark works as a family
-          signal and reads as a shortage side by side in the Street. */}
-      {isMark ? (
-        <path
-          d="M150 86L212 148 150 210 88 148z"
-          fill="none"
-          stroke={accent}
-          strokeWidth={0.7}
-          opacity={0.7}
-        />
-      ) : kind !== "scar" ? (
-        <rect
-          x={90}
-          y={92}
-          width={120}
-          height={112}
-          fill="none"
-          stroke={accent}
-          strokeWidth={0.7}
-          opacity={0.6}
-        />
-      ) : null}
-      <g transform="translate(109 107)" style={{ color: accent }}>
+          signal and reads as a shortage side by side in the Street.
+
+          No frame around it. The card already carries a border, an inner rule
+          and a divider; a fourth box drawn around the single illustration read
+          as a placeholder waiting for art rather than as the art itself. */}
+      <g transform={`translate(${CENTRE - ART / 2} 107)`} style={{ color: accent }}>
         <Icon name={field} size={82} strokeWidth={1.9} />
       </g>
 
       <line
         x1={24}
-        y1={226}
+        y1={DIVIDER_Y}
         x2={W - 24}
-        y2={226}
+        y2={DIVIDER_Y}
         stroke={accent}
         strokeWidth={0.8}
         opacity={0.8}
       />
-      {wrap(body, 30).map((line, i) => (
+      {bodyLines.map((line, i) => (
         <text
           key={i}
           x={W / 2}
-          y={250 + i * 14}
+          y={BODY_TOP + i * BODY_LEAD}
           textAnchor="middle"
           fill={ink}
-          style={{ font: "10px ui-sans-serif, system-ui, sans-serif" }}
+          style={{ font: `10.5px ${SERIF}` }}
         >
           {line}
         </text>
       ))}
 
-      {flavour &&
-        wrap(flavour, 36).map((line, i, all) => (
+      {showFlavour &&
+        flavourLines.map((line, i, all) => (
           <text
             key={i}
             x={W / 2}
-            y={H - 52 - (all.length - 1 - i) * 12}
+            y={flavourBaseline - (all.length - 1 - i) * FLAVOUR_LEAD}
             textAnchor="middle"
             fill={ink}
             opacity={FAINT_OPACITY}
-            style={{ font: "italic 9px ui-serif, Georgia, serif" }}
+            style={{ font: `italic 9px ${SERIF}` }}
           >
             {line}
           </text>
@@ -388,12 +428,9 @@ export function CardFace({
           textAnchor="middle"
           fill={ink}
           opacity={FAINT_OPACITY}
-          style={{
-            font: "8px ui-sans-serif, system-ui, sans-serif",
-            letterSpacing: "2.2px",
-          }}
+          style={{ font: `9px ${SERIF}`, ...HEADING, letterSpacing: "0.18em" }}
         >
-          {footer.toUpperCase()}
+          {footer}
         </text>
       )}
     </svg>

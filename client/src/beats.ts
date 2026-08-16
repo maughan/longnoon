@@ -128,6 +128,26 @@ function anchor(e: GameEvent, v: ClientState, seat: PlayerId | null): Beat | nul
       return { id: 0, kind: card(e.cardId).type === 'omen' ? 'omen' : 'act',
         icon: iconForCard(card(e.cardId)),
         title: `${card(e.cardId).name} enters the Street` };
+    // Its own sentence. Left as a clause it would hang off whatever card
+    // happened to tip it — and the bar filling is bigger news than the card.
+    /*
+      NAME_READ carries a cardId ONLY when the Sign resolved. A read that found
+      nothing is still announced — the table watched it happen and the tension
+      is the point — but it names no card, because there is none to name that
+      anybody is entitled to.
+    */
+    case 'NAME_READ':
+      return e.resolved && e.cardId
+        ? { id: 0, kind: 'dire', icon: 'vessel',
+            title: `It remembers ${whom(v, e.player, seat)}`,
+            detail: `${card(e.cardId).name} turns on ${
+              seat === e.player ? 'you' : 'them'}` }
+        : { id: 0, kind: 'dire', icon: 'vessel',
+            title: `It remembers ${whom(v, e.player, seat)}`,
+            detail: 'and finds nothing it wants' };
+    case 'WHISPER_FILL':
+      return { id: 0, kind: 'dire', icon: 'whisper',
+        title: `The whispering breaks over — Doom +${e.doom}` };
     default:
       return null;
   }
@@ -184,12 +204,13 @@ export function narrate(
     if (bare) {
       // Doom climbing on its own happens several rounds running. The delta
       // alone reads as the same sentence repeated; the running total does not.
-      out.push({ ...open, title: `${bare} +${bare === 'Doom' ? doom : whispers}`,
+      const n = bare === 'Doom' ? doom : whispers;
+      out.push({ ...open, title: `${bare} ${n > 0 ? '+' : ''}${n}`,
         detail: `${total} in all` });
     } else {
       // A card that whispers twice whispered twice; it did not do two things.
-      if (whispers) clauses.push(`Whispers +${whispers}`);
-      if (doom) clauses.push(`Doom +${doom}`);
+      if (whispers) clauses.push(`Whispers ${whispers > 0 ? '+' : ''}${whispers}`);
+      if (doom) clauses.push(`Doom ${doom > 0 ? '+' : ''}${doom}`);
       const extra = [...new Set(clauses.filter(Boolean))].join(' · ');
       out.push({
         ...open,
@@ -247,6 +268,19 @@ export function narrate(
   return out;
 }
 
+/**
+ * "first", "second", "third"... falling back to "7th" past the point where a
+ * word is shorter than the numeral.
+ */
+function ordinal(n: number): string {
+  const words = ['', 'first', 'second', 'third', 'fourth', 'fifth', 'sixth'];
+  if (words[n]) return words[n]!;
+  const rem = n % 100;
+  const suffix = rem >= 11 && rem <= 13 ? 'th'
+    : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th';
+  return `${n}${suffix}`;
+}
+
 /** One line of table talk per event, for the chronicle. */
 export function describe(
   e: GameEvent, v: ClientState | null, seat: PlayerId | null,
@@ -254,6 +288,57 @@ export function describe(
   if (!v) return e.t.toLowerCase().replace(/_/g, ' ');
   // The chronicle keeps every tick of the tracks; only the spoken beat merges
   // them, and only because a card that whispers twice is still one action.
+  // Chronicle only, all of these. They happen several times a turn, so a beat
+  // apiece would crowd out the moves that actually decide anything — but the
+  // log is a record, and a record that says "grit" is not one.
+  if (e.t === 'GRIT') {
+    const who = nameOf(v, e.player, seat);
+    const verb = who === 'You' ? 'cash' : 'cashes';
+    if (e.cards?.length) {
+      // Named, because which card you gave up is the whole decision: a
+      // Saddlebag costs nothing, a Sign costs you the Sign.
+      const what = e.cards.length === 1
+        ? card(e.cards[0]!).name
+        : `${e.cards.length} cards`;
+      return `${who} ${verb} in ${what} for ${e.amount} Grit`;
+    }
+    return `${who} ${who === 'You' ? 'take' : 'takes'} ${e.amount} Grit`;
+  }
+  if (e.t === 'DREW') {
+    const who = nameOf(v, e.player, seat);
+    return `${who} ${who === 'You' ? 'draw' : 'draws'} ${e.n} card${
+      e.n === 1 ? '' : 's'}`;
+  }
+  if (e.t === 'RESHUFFLED') {
+    return `${nameOf(v, e.player, seat)} shuffles ${e.n} back under`;
+  }
+  if (e.t === 'ESCALATED') {
+    // The Dusk report shows this too, but the chronicle is the only place to
+    // look up when a Threat got as bad as it is.
+    return `${card(e.cardId).name} is worse for having been left`
+      + ` — Clear ${e.clear ?? '—'}, Menace ${e.menace}`;
+  }
+  if (e.t === 'PHASE') {
+    return e.phase === 'dusk'
+      ? `Dusk falls on round ${e.round}`
+      : `Round ${e.round} begins`;
+  }
+  // A prompt is not a thing that happened. The client drops empty lines.
+  if (e.t === 'CHOICE_REQUIRED') return '';
+  // Unspoken on purpose. Whatever caused the discard is already in the log —
+  // the cash-in names the card it cost, the turn beat marks the sweep — and
+  // this event is here so the sound has one source of truth, not two lines.
+  if (e.t === 'DISCARDED') return '';
+  if (e.t === 'NAME_READ') {
+    const who = nameOf(v, e.player, seat);
+    return e.resolved && e.cardId
+      ? `It remembers ${who} — ${card(e.cardId).name} turns on them`
+      : `It remembers ${who}, and finds nothing it wants`;
+  }
+  if (e.t === 'WHISPER_FILL') {
+    return `The whispering breaks over for the ${ordinal(e.fill)} time — `
+      + `Doom +${e.doom}, the bar falls back to ${e.total}`;
+  }
   if (e.t === 'WHISPERS') return `Whispers +${e.delta} — ${e.total} in all`;
   if (e.t === 'DOOM') return `Doom +${e.delta} — ${e.total} in all`;
   const head = anchor(e, v, seat);

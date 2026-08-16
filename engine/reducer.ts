@@ -1,17 +1,17 @@
 import type {
-  GameState, Command, PlayerId, GameEvent, CardInstance,
+  GameState, Command, PlayerId, GameEvent, CardInstance, CardId,
 } from './state';
 import { card } from '../content/cards';
 import { shuffle } from './rng';
 import {
   opsFor, pushOps, runQueue, resolveChoice, drawCards, damagePlayer,
-  livingPlayers, addWhispers, spendWhispers, newInstance, signsHeld,
+  livingPlayers, addWhispers, assertWhisperInvariants, newInstance, signsHeld,
   onThreatEntered, pickExtreme, deckSize, retire,
   effectiveClear, effectiveMenace, canPay, clearThreat,
 } from './effects';
 
 /**
- * The fallen aim their own Fevered cards. Paper rules, Old One: "now you aim
+ * The fallen aim their own Fevered cards. Paper rules, the Vessel: "now you aim
  * them again"; Revenant: "play a Fevered card (you choose all targets)".
  */
 /** The Marked player's secret aim, as printed on the role card. */
@@ -19,12 +19,27 @@ const AIM_PLAYERS = 2;
 const AIM_SIGNS = 3;
 
 const aimsFeveredCards = (status: string): boolean =>
-  status === 'oldOne' || status === 'revenant';
+  status === 'vessel' || status === 'revenant';
 
-export class IllegalCommand extends Error {}
+export { IllegalCommand } from './errors';
+import { IllegalCommand } from './errors';
 
-/** Pure: clones, mutates the clone, returns it with the events emitted. */
+/**
+ * Pure: clones, mutates the clone, returns it with the events emitted.
+ *
+ * A thin shell over `applyInner` so the Whisper invariant is checked at exactly
+ * one place. `applyInner` has two exits and will grow more; a rule enforced at
+ * every `return` is a rule enforced at every `return` *so far*.
+ */
 export function apply(
+  state: GameState, playerId: PlayerId, c: Command,
+): { state: GameState; events: GameEvent[] } {
+  const out = applyInner(state, playerId, c);
+  assertWhisperInvariants(out.state);
+  return out;
+}
+
+function applyInner(
   state: GameState, playerId: PlayerId, c: Command,
 ): { state: GameState; events: GameEvent[] } {
   const s: GameState = structuredClone(state);
@@ -44,7 +59,7 @@ export function apply(
     // so the player is asked to aim. Skipping the win check meant the burial
     // landed, `vesselDamage` reached `vesselClear`, and nothing happened. The
     // only surviving check ran at Dusk, so a won game either ended a full round
-    // late or not at all — Doom is tested first, so the Old One could take a
+    // late or not at all — Doom is tested first, so the Old One's side could take a
     // game the posse had already won.
     checkWin(s, ev);
     s.log.push(...ev);
@@ -65,6 +80,9 @@ export function apply(
       s.actionsLeft--;
       p.discard.push(inst);
       ev.push({ t: 'PLAYED', player: playerId, cardId: def.id, fevered: inst.fevered });
+      // One bar, both acts: in Act I this pushes towards the Turning, in Act II
+      // towards the next tranche of Doom. Same gesture, same cost, and the
+      // player does not have to learn a second rule at the halfway point.
       if (def.whispers) addWhispers(s, def.whispers, ev);
       // A gift used in time pays the giver. Past its round it is simply a card
       // you own, which is the other half of the decision: hold it and it is
@@ -83,15 +101,18 @@ export function apply(
 
     case 'SPEND_GRIT': {
       let total = 0;
+      const cashed: CardId[] = [];
       for (const uid of c.uids) {
         const idx = p.hand.findIndex((ci) => ci.uid === uid);
         if (idx === -1) throw new IllegalCommand('Card not in hand');
         const inst = p.hand.splice(idx, 1)[0];
         total += card(inst.cardId).grit;
+        cashed.push(inst.cardId);
         p.discard.push(inst);
       }
       p.gritThisTurn += total;
-      ev.push({ t: 'GRIT', player: playerId, amount: total });
+      ev.push({ t: 'DISCARDED', player: playerId, n: cashed.length, hand: false });
+      ev.push({ t: 'GRIT', player: playerId, amount: total, cards: cashed });
       break;
     }
 
@@ -158,10 +179,10 @@ export function apply(
 
     /**
      * The Revenant's Whisper: burn a card out of your shrinking hand to arm the
-     * Old One.
+     * Vessel.
      *
      * Repointed at the pool rather than the old track — same number, and in Act
-     * II that number is ammunition. This is what stops the Old One going dry if
+     * II that number is ammunition. This is what stops the Vessel going dry if
      * the posse simply refuses to buy Signs: the fallen keep feeding it.
      */
     case 'REVENANT_WHISPER': {
@@ -171,6 +192,7 @@ export function apply(
       if (idx === -1) throw new IllegalCommand('Card not in hand');
       s.actionsLeft--;
       p.discard.push(...p.hand.splice(idx, 1));
+      ev.push({ t: 'DISCARDED', player: playerId, n: 1, hand: false });
       addWhispers(s, 1, ev);
       break;
     }
@@ -193,87 +215,6 @@ export function apply(
       break;
     }
 
-    case 'SUMMON': {
-      requireOldOne(s, playerId);
-      requireAction(s);
-      s.actionsLeft--;
-      const next = s.supply.mythos.shift();
-      if (next && s.street[c.slot] === null) {
-        s.street[c.slot] = {
-          instance: next, damage: 0, turned: false,
-          enteredRound: s.round, escalation: 0,
-        };
-        ev.push({ t: 'THREAT_ENTERED', slot: c.slot, cardId: next.cardId });
-        onThreatEntered(s, next.cardId, ev);
-      }
-      break;
-    }
-
-    /**
-     * Close off a card type for a round.
-     *
-     * Replaces WHISPER as the Old One's every-turn move, and the difference is
-     * the point: WHISPER moved a number nobody could argue with and touched no
-     * player. This changes what four people can do with their hands.
-     */
-    case 'SHUTTER': {
-      requireOldOne(s, playerId);
-      requireAction(s);
-      s.actionsLeft--;
-      const until = s.round + s.tuning.shutterDuration;
-      s.shuttered = { type: c.cardType, untilRound: until };
-      ev.push({ t: 'SHUTTERED', cardType: c.cardType, untilRound: until });
-      break;
-    }
-
-    /**
-     * A gift, with a string on it.
-     *
-     * Free power to a player who needs it, and the Old One is paid if they use
-     * it soon. Refusing costs them the card; taking it costs everyone else.
-     */
-    case 'OFFER': {
-      requireOldOne(s, playerId);
-      requireAction(s);
-      const target = s.players[c.target];
-      if (!target || target.status !== 'posse') {
-        throw new IllegalCommand('Not a living member of the posse');
-      }
-      if (card(c.cardId).type !== 'sign') throw new IllegalCommand('Signs only');
-      s.actionsLeft--;
-      const gift = newInstance(s, c.cardId);
-      // Act II: every Sign everywhere is already Fevered, and a gift from this
-      // quarter would hardly arrive clean.
-      gift.fevered = true;
-      gift.offeredUntil = s.round + 1;
-      target.discard.push(gift);
-      ev.push({ t: 'OFFERED', by: playerId, target: c.target, cardId: c.cardId });
-      break;
-    }
-
-    case 'CALL': {
-      requireOldOne(s, playerId);
-      requireAction(s);
-      // Whispers are the ammunition now. In Act II the track has already
-      // fired, so what accumulates after it is a pool this seat spends.
-      if (s.whispers < s.tuning.callWhisperCost) {
-        throw new IllegalCommand('Not enough Whispers');
-      }
-      spendWhispers(s, s.tuning.callWhisperCost, ev);
-      s.actionsLeft--;
-      const t = s.players[c.target];
-      const top = t.deck.shift();
-      if (top) {
-        t.discard.push(top);
-        const def = card(top.cardId);
-        if (def.type === 'sign') {
-          pushOps(s, opsFor(def, true), playerId, def.id);
-          runQueue(s, ev);
-        }
-      }
-      break;
-    }
-
     case 'END_TURN':
       endTurn(s, ev);
       break;
@@ -291,10 +232,6 @@ export function apply(
 function requireAction(s: GameState): void {
   if (s.actionsLeft <= 0) throw new IllegalCommand('No actions left');
 }
-function requireOldOne(s: GameState, pid: PlayerId): void {
-  if (s.players[pid].status !== 'oldOne') throw new IllegalCommand('Not the Old One');
-}
-
 export function addDoom(s: GameState, n: number, ev: GameEvent[]): void {
   s.doom += n;
   ev.push({ t: 'DOOM', delta: n, total: s.doom });
@@ -432,6 +369,9 @@ function startTurn(s: GameState, ev: GameEvent[]): void {
 function endTurn(s: GameState, ev: GameEvent[]): void {
   const p = s.players[s.activePlayer];
   if (s.beckoned === p.id) s.beckoned = null;
+  if (p.hand.length) {
+    ev.push({ t: 'DISCARDED', player: p.id, n: p.hand.length, hand: true });
+  }
   p.discard.push(...p.hand);
   p.hand = [];
   p.gritThisTurn = 0;
@@ -439,6 +379,28 @@ function endTurn(s: GameState, ev: GameEvent[]): void {
 }
 
 function advance(s: GameState, ev: GameEvent[]): void {
+  /*
+    Nobody left who can take a turn.
+
+    `startTurn` skips a `gone` seat by calling `advance`, and `advance` walks to
+    the next seat or into Dusk, which rolls the round and starts again. With
+    every seat gone that is unbounded mutual recursion — Dusk after Dusk with
+    nobody to end a turn — and it dies on the stack rather than hanging, which
+    is at least loud.
+
+    `checkWin` cannot catch it: it runs after `applyInner` RETURNS, and this
+    never returns. So the bail-out has to be here.
+
+    Surfaced by driving the simulator with the real policy rather than random
+    legal moves; random play never emptied the table.
+  */
+  if (!s.turnOrder.some((id) => s.players[id].status !== 'gone')) {
+    if (!s.winner) {
+      s.winner = 'oldOne';
+      ev.push({ t: 'GAME_OVER', winner: 'oldOne' });
+    }
+    return;
+  }
   const i = s.turnOrder.indexOf(s.activePlayer);
   if (i === s.turnOrder.length - 1) { dusk(s, ev); return; }
   s.activePlayer = s.turnOrder[i + 1];
@@ -452,6 +414,7 @@ function dusk(s: GameState, ev: GameEvent[]): void {
   s.street.forEach((sl, i) => {
     if (!sl) return;
     if (card(sl.instance.cardId).type === 'omen') {
+      // Omens drip in both acts: towards the Turning, then towards Doom.
       addWhispers(s, s.tuning.omenWhispersPerRound, ev);
     }
     // Omens resolve Menace through the same path; theirs comes from TUNING.
@@ -523,7 +486,35 @@ export function checkTurning(s: GameState, ev: GameEvent[]): void {
   });
 
   s.vessel = vessel;
-  s.players[vessel].status = 'oldOne';
+  s.players[vessel].status = 'vessel';
+  /*
+    The Vessel's deck is replaced — but it KEEPS its own Signs.
+
+    That is the one idea worth preserving from the old design: the more corrupt
+    a player was, the more of their own purchases are in the thing now hunting
+    the table. A Puritan Vessel gets the fixed ten and nothing else, which is a
+    real difference in how the seat plays and a real consequence of Act I.
+
+    Everything that is not a Sign is boneyarded. Hand and discard are swept in
+    too, so a Sign in hand at the Turning is not quietly lost.
+  */
+  {
+    const v = s.players[vessel];
+    const all = [...v.deck, ...v.hand, ...v.discard];
+    const kept = all
+      .filter((ci) => card(ci.cardId).type === 'sign')
+      .map((ci) => ({ ...ci, fevered: true }));
+    v.boneyard.push(...all.filter((ci) => card(ci.cardId).type !== 'sign'));
+    const fixed: CardInstance[] = [];
+    for (const [id, n] of Object.entries(s.tuning.vesselDeck)) {
+      for (let i = 0; i < n; i++) fixed.push(newInstance(s, id));
+    }
+    const r = shuffle([...fixed, ...kept], s.seed, s.rngCursor);
+    s.rngCursor = r.cursor;
+    v.deck = r.items;
+    v.hand = [];
+    v.discard = [];
+  }
   if (marked) s.revealedRoles.push(marked);
   if (!s.revealedRoles.includes(vessel)) s.revealedRoles.push(vessel);
 
@@ -547,10 +538,12 @@ export function checkTurning(s: GameState, ev: GameEvent[]): void {
 
   s.supply.trouble = [];
   s.act = 'mythos';
-  // The track has fired; what it held is spent on the door opening. What
-  // accumulates from here is a pool the Old One draws on, and it starts empty
-  // so the posse's Act II choices are what fills it.
+  // The bar has done its Act I job. It empties and starts again — same
+  // threshold, so it looks identical, but filling faster (whisperRateMythos)
+  // and into escalating Doom rather than into the Turning.
   s.whispers = 0;
+  s.whisperFills = 0;
+
   // "Doom begins at 3. If the Marked player achieved their secret aim, it
   // begins at 6." The aim: at the Turning, two OTHER players each hold 3+ Signs.
   const encouraged = marked

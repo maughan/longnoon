@@ -21,7 +21,8 @@
     "test:worker": "vitest run --config vitest.workers.config.ts",
     "tunnel": "cloudflared tunnel --url http://localhost:8787",
     "typecheck:worker": "tsc --noEmit -p worker/tsconfig.json",
-    "build:client": "vite build"
+    "build:client": "vite build",
+    "serve:watch": "tsx watch server/serve.ts"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.8.60",

@@ -80,7 +80,13 @@ export interface ServerMsg {
    * button state and the bots' action space, with no second implementation to
    * drift. It leaks nothing: the list only ever contains that seat's own moves.
    */
-  state: { view: ClientState; events: GameEvent[]; legal: Command[] };
+  state: {
+    view: ClientState;
+    events: GameEvent[];
+    legal: Command[];
+    /** Which seats are bots. Public, and not something the engine knows. */
+    bots: PlayerId[];
+  };
   lobby: { event: LobbyEvent };
   vote: { seat: PlayerId; state: VoteState };
   error: { message: string };

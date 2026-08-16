@@ -212,9 +212,8 @@ describe('isLegal — the server gate for online play', () => {
     const evil: Command[] = [
       { t: 'BUY', cardId: 'colt' },                    // no Grit
       { t: 'PAY_TOLL', slot: 2 },                      // nothing there to pay
-      { t: 'SHUTTER', cardType: 'kit' },               // not the Old One
-      { t: 'CALL', target: other },                    // not the Old One
       { t: 'BECKON', target: other },                  // not a Revenant
+      { t: 'REVENANT_WHISPER', uid: 'not-a-card' },    // not a Revenant
       { t: 'SPEND_GRIT', uids: ['not-a-card'] },
     ];
     for (const c of evil) {

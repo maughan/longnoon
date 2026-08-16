@@ -60,6 +60,10 @@ const AXIS_ALIASES: Record<string, NumericTuningKey> = {
   damage: 'damagePerHit',
   hand: 'handSize',
   actions: 'actionsPerTurn',
+  // Fractional, and Number() handles that — the grid does not assume integers.
+  rate: 'whisperRateMythos',
+  fill: 'doomPerFill',
+  fillstep: 'doomPerFillStep',
 };
 
 /** Any known axis flag overrides TUNING for headline and mixed (first value). */

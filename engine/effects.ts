@@ -1,8 +1,10 @@
 import type {
   GameState, Op, PlayerId, GameEvent, CardInstance, Card, Target, StreetSlot,
+  CardType,
 } from './state';
-import { card } from '../content/cards';
+import { card, SIGN_IDS } from '../content/cards';
 import { shuffle, randInt } from './rng';
+import { IllegalCommand } from './errors';
 
 // ---------------------------------------------------------------------------
 // Fevered resolution. This is the schema bet made concrete: three mechanisms,
@@ -10,7 +12,7 @@ import { shuffle, randInt } from './rng';
 // ---------------------------------------------------------------------------
 
 /**
- * `aimed` is the Old One's and the Revenant's privilege: the paper rules say
+ * `aimed` is the Vessel's and the Revenant's privilege: the paper rules say
  * they play Fevered cards "targets of your choosing" — "you keep your own deck,
  * all Fevered, and now you aim them again." So the Fevered face still applies
  * its appended costs, but its retargets are dropped and the card is aimable.
@@ -27,7 +29,16 @@ export function opsFor(c: Card, fevered: boolean, aimed = false): Op[] {
         if (!('target' in op)) return op;
         return { ...op, target: t } as Op;
       });
-  return [...base, ...(f.appendOps ?? [])];
+  /*
+    Retargets are resolved against `c.ops` above, BEFORE anything is spliced
+    around it, so `retarget: { 0: ... }` still means "the first op printed on
+    the card" and not "the first op in this array". Prepending would otherwise
+    silently shift every index on any card that used both.
+
+    Prepended ops survive `aimed`, like appended ones: the Vessel and the
+    Revenants lose the Fevered RETARGETS, not the Fevered costs.
+  */
+  return [...(f.prependOps ?? []), ...base, ...(f.appendOps ?? [])];
 }
 
 export function displayName(c: Card, fevered: boolean): string {
@@ -40,21 +51,22 @@ export function displayName(c: Card, fevered: boolean): string {
 
 export function livingPlayers(s: GameState): PlayerId[] {
   return s.turnOrder.filter((id) =>
-    ['posse', 'oldOne'].includes(s.players[id].status));
+    ['posse', 'vessel'].includes(s.players[id].status));
 }
 
-function refill(s: GameState, pid: PlayerId): void {
+function refill(s: GameState, pid: PlayerId, ev: GameEvent[]): void {
   const p = s.players[pid];
   if (p.deck.length || !p.discard.length) return;
   const r = shuffle(p.discard, s.seed, s.rngCursor);
   s.rngCursor = r.cursor;
   p.deck = r.items;
   p.discard = [];
-  // "You shrink." The Old One floors at one card so the endgame cannot stall;
+  ev.push({ t: 'RESHUFFLED', player: pid, n: p.deck.length });
+  // "You shrink." The Vessel floors at one card so the endgame cannot stall;
   // a Revenant is allowed to run out completely — burning out is what replaced
   // burial as the posse's answer to them.
-  const floor = p.status === 'oldOne' ? 1 : 0;
-  if (p.status === 'revenant' || p.status === 'oldOne') {
+  const floor = p.status === 'vessel' ? s.tuning.vesselDeckFloor : 0;
+  if (p.status === 'revenant' || p.status === 'vessel') {
     for (let i = 0; i < s.tuning.revenantDecay && p.deck.length > floor; i++) {
       p.boneyard.push(p.deck.pop()!);
     }
@@ -67,7 +79,7 @@ export function drawCards(
   const p = s.players[pid];
   let drawn = 0;
   for (let i = 0; i < n; i++) {
-    refill(s, pid);
+    refill(s, pid, ev);
     if (!p.deck.length) {
       // The fallen have nothing left to shrink: they are gone for good.
       if (p.status === 'revenant') {
@@ -151,7 +163,7 @@ export function damagePlayer(
   }
   const trashed: string[] = [];
   for (let i = 0; i < n; i++) {
-    refill(s, pid);
+    refill(s, pid, ev);
     if (!p.deck.length) { fall(s, pid, ev); break; }
     let idx = p.deck.findIndex((ci) => card(ci.cardId).type !== 'sign');
     // Non-Signs first, then Signs — and Last Words last of all, because being
@@ -226,6 +238,23 @@ export function pickExtreme(
 /** Choice key standing for the Vessel, distinct from numeric slot keys. */
 export const VESSEL_KEY = 'vessel';
 
+/**
+ * "No thank you" in a modal choice.
+ *
+ * Not a slot index, so it cannot collide with one, and not the empty string,
+ * which a client could send by accident.
+ */
+export const DECLINE_KEY = 'decline';
+
+/** Types NOT THAT ONE may close. Threats are in nobody's hand; Scars are dead. */
+export const SHUTTERABLE: CardType[] = ['kit', 'deed', 'sign'];
+
+/** Is this type currently closed? */
+export function shuttered(s: GameState, type: CardType): boolean {
+  return s.shuttered !== null && s.shuttered.type === type
+    && s.round <= s.shuttered.untilRound;
+}
+
 /** A Threat leaving the Street goes back in the box, or back in the deck. */
 export function retire(s: GameState, inst: CardInstance): void {
   const type = card(inst.cardId).type;
@@ -252,8 +281,9 @@ export function vesselTargetable(s: GameState): boolean {
 
 /**
  * Only the living posse can bury the Vessel — "THE POSSE WINS by burying the
- * Vessel". The Old One will not wound itself, and a Revenant wins only if the
- * Old One wins, so neither contributes even when holding a card that would.
+ * Vessel". The Vessel will not wound itself, and a Revenant wins only if the
+ * Old One's side does, so neither contributes even when holding a card that
+ * would.
  */
 export function damageVessel(
   s: GameState, n: number, by: PlayerId, ev: GameEvent[],
@@ -278,6 +308,52 @@ function occupiedSlots(s: GameState): number[] {
   return s.street
     .map((sl, i) => (sl ? i : -1))
     .filter((i) => i >= 0 && card(s.street[i]!.instance.cardId).type !== 'omen');
+}
+
+/** The exact inverse: Omens only. Nothing but `banishOmen` may touch these. */
+export function omenSlots(s: GameState): number[] {
+  return s.street
+    .map((sl, i) => (sl ? i : -1))
+    .filter((i) => i >= 0 && card(s.street[i]!.instance.cardId).type === 'omen');
+}
+
+/**
+ * Which Street slots an op with this target reaches.
+ *
+ * One function, because this arithmetic used to be three copies of a ternary
+ * chain — in `damage`, in `destroy` and in `cancelMenace` — and each one knew
+ * about a different subset of the targets.
+ *
+ * **Mutates `s.rngCursor` for `random`.** That is deliberate and it is why this
+ * takes the whole state: the draw has to come off the state cursor or a replay
+ * picks a different slot and the game stops reconstructing. `Math.random` is
+ * banned here by `npm run lint:determinism`, but the lint cannot catch a
+ * closure-held generator, so the rule is that randomness lives in `GameState`.
+ */
+export function resolveSlots(s: GameState, target: Target): number[] {
+  const open = occupiedSlots(s);
+  switch (target) {
+    case 'omen': return omenSlots(s);
+    case 'all': return open;
+    case 'leftmostSlot': return open.slice(0, 1);
+    case 'lowestClear': {
+      if (!open.length) return [];
+      // Effective, not printed. A Threat that has grown from Clear 4 to 6 since
+      // it arrived is not the easy one any more, and reading `card.clear` here
+      // would send the shot at it anyway.
+      return [open.reduce((a, b) =>
+        (effectiveClear(s.street[b]!) ?? Infinity) < (effectiveClear(s.street[a]!) ?? Infinity)
+          ? b : a)];
+    }
+    case 'random': {
+      if (!open.length) return [];
+      const pick = open[randInt(s.seed, s.rngCursor, open.length)]!;
+      s.rngCursor += 1;
+      return [pick];
+    }
+    case 'itChooses': return resolveSlots(s, s.tuning.coltFeveredTarget);
+    default: return [];
+  }
 }
 
 export function resolvePlayers(
@@ -330,6 +406,37 @@ export function choiceOptions(
     return threatDeck(s).slice(0, op.n).map((ci) => ({
       key: ci.uid, label: card(ci.cardId).name,
     }));
+  }
+  /*
+    The one modal in the game: blast the Street, or bring down an Omen.
+
+    Listed Omens FIRST and the decline LAST, so the interesting choice reads
+    before the default. If no Omen is in the Street this returns a single
+    option and `runQueue` resolves it without prompting — which is exactly the
+    rule "offer the Omen branch only when an Omen is actually in play", falling
+    out of the existing machinery rather than needing a guard of its own.
+  */
+  if (op.op === 'shutter') {
+    return SHUTTERABLE
+      .filter((type) => !shuttered(s, type))
+      .map((type) => ({ key: type, label: `No ${type} next round` }));
+  }
+  if (op.op === 'gift' && op.to !== undefined) {
+    // Second prompt: which Sign. The Vessel chooses, because a gift it did not
+    // pick is not a temptation — it is a raffle.
+    return SIGN_IDS.map((id) => ({ key: id, label: card(id).name }));
+  }
+  if (op.op === 'callSign' || op.op === 'gift') {
+    return s.turnOrder
+      .filter((id) => s.players[id].status === 'posse')
+      .map((id) => ({ key: id, label: s.players[id].name }));
+  }
+  if (op.op === 'banishOmen') {
+    const omens = omenSlots(s).map((i) => ({
+      key: String(i),
+      label: `Bring down ${card(s.street[i]!.instance.cardId).name}`,
+    }));
+    return [...omens, { key: DECLINE_KEY, label: 'Blast the Street instead' }];
   }
   if (isSlotOp(op)) {
     const slots = occupiedSlots(s).map((i) => ({
@@ -415,24 +522,115 @@ function damageThreat(
   if (sl.damage >= clear) clearThreat(s, slot, by, ev);
 }
 
+// --------------------------------------------------------------- Whispers
+//
+// One number, one direction: UP.
+//
+// The track means the same thing in both acts — when it fills, something bad
+// happens — and the only difference is what is waiting at the top and how fast
+// you get there. Act I fills once, into the Turning. Act II fills over and
+// over, into escalating Doom.
+//
+// **Nothing subtracts from `whispers`.** There is no spend, no clamp, no
+// `Math.min` taking what it can. This field was briefly a progress meter AND a
+// currency the Vessel drew on, which is exactly how it went negative, and the
+// absence of a subtract path is what makes that unrepeatable rather than
+// merely fixed. If something needs to be spent, it is not this number.
+
 /**
- * Spend from the Whisper pool.
+ * Add to the Whisper track, applying the Act II rate and resolving any fills.
  *
- * The same number as the Act I track, read the other way round. Before the
- * Turning it is a clock counting up to a threshold; after it, the threshold has
- * fired and what accumulates is the Old One's ammunition. One number, because
- * they are the same substance — what the table gave away.
+ * The only way the track moves.
+ *
+ * Act I leaves the bar standing above the threshold for `checkTurning` to find
+ * at the end of the command — the Turning is not this function's business.
+ * Act II resolves here, because a bar left full would render "26 of 26" on a
+ * client for a whole turn and would let two later gains share one fill.
  */
-export function spendWhispers(s: GameState, n: number, ev: GameEvent[]): void {
-  const paid = Math.min(n, s.whispers);
-  if (paid <= 0) return;
-  s.whispers -= paid;
-  ev.push({ t: 'WHISPERS', delta: -paid, total: s.whispers });
+export function addWhispers(s: GameState, n: number, ev: GameEvent[]): void {
+  if (n <= 0) return;
+  s.whispers += mythosRate(s, n);
+  ev.push({ t: 'WHISPERS', delta: mythosRate(s, n), total: s.whispers });
+  if (s.act !== 'mythos') return;
+
+  const threshold = s.tuning.whisperThreshold;
+  // A threshold of zero would spin here for ever. Nothing sets it, but this is
+  // reached from card data and from TUNING sweeps alike.
+  if (threshold <= 0) return;
+
+  /*
+    A loop, not an `if`, and the remainder CARRIES.
+
+    Both halves matter and both are easy to get wrong in the same direction —
+    quietly losing Whispers the player earned. At 11 of 12 a three-Whisper Sign
+    must leave the bar at 2, not at 0; and a single large gain must be able to
+    fill the bar twice and pay for both, not silently swallow the second.
+  */
+  while (s.whispers >= threshold) {
+    s.whispers -= threshold;
+    s.whisperFills += 1;
+    const doom = doomForFill(s, s.whisperFills);
+    // The fill BEFORE the Doom it causes: the narrator hangs events after an
+    // anchor onto it as clauses, so the other order announces the same Doom
+    // twice, once with no cause attached.
+    ev.push({ t: 'WHISPER_FILL', fill: s.whisperFills, doom, total: s.whispers });
+    addDoomFromFill(s, doom, ev);
+  }
 }
 
-export function addWhispers(s: GameState, n: number, ev: GameEvent[]): void {
-  s.whispers += n;
-  ev.push({ t: 'WHISPERS', delta: n, total: s.whispers });
+/**
+ * What a gain is actually worth, here and now.
+ *
+ * Rounded, because the track is drawn as pips and a bar at 7.5 is not a thing
+ * anyone can read. Floored at 1 for any positive gain: at a rate below 0.5 the
+ * rounding would otherwise swallow single Whispers entirely, which is a
+ * mechanic silently doing nothing — the failure mode this project keeps
+ * hitting.
+ */
+function mythosRate(s: GameState, n: number): number {
+  if (s.act !== 'mythos') return n;
+  return Math.max(1, Math.round(n * s.tuning.whisperRateMythos));
+}
+
+/** Doom for the nth fill, 1-based. First `doomPerFill`, then a step each time. */
+export function doomForFill(s: GameState, fill: number): number {
+  return s.tuning.doomPerFill + (fill - 1) * s.tuning.doomPerFillStep;
+}
+
+/**
+ * Doom from a fill.
+ *
+ * `addDoom` lives in `reducer.ts` and importing it here would close the cycle
+ * `reducer -> effects -> reducer`, so the increment is inlined. It is two lines
+ * and the event shape is fixed; `tests/whispers.test.ts` asserts the two agree.
+ */
+function addDoomFromFill(s: GameState, n: number, ev: GameEvent[]): void {
+  if (n <= 0) return;
+  s.doom += n;
+  ev.push({ t: 'DOOM', delta: n, total: s.doom });
+}
+
+/**
+ * The invariant, checkable from anywhere. Called by `apply` after every
+ * command and by the randomised tests.
+ *
+ * The upper bound is the interesting half and it is asserted in BOTH acts, not
+ * just Act II: a track at or above its threshold once a command has finished
+ * resolving means a fill was missed, or in Act I that the Turning did not fire.
+ * Either way something that should have happened did not.
+ */
+export function assertWhisperInvariants(s: GameState): void {
+  if (s.whispers < 0) {
+    throw new IllegalCommand(
+      `Whisper track went negative: ${s.whispers}. Nothing may subtract from it.`,
+    );
+  }
+  if (s.whispers >= s.tuning.whisperThreshold) {
+    throw new IllegalCommand(
+      `Whisper track left full: ${s.whispers} >= ${s.tuning.whisperThreshold} `
+      + '— a fill was missed, or the Turning did not fire',
+    );
+  }
 }
 
 export function execOp(
@@ -462,15 +660,128 @@ export function execOp(
         damageVessel(s, op.n, controller, ev);
         return;
       }
-      const slots = chosen !== undefined ? [Number(chosen)]
-        : op.target === 'leftmostSlot' ? occupiedSlots(s).slice(0, 1)
-        : occupiedSlots(s);
+      const slots = chosen !== undefined ? [Number(chosen)] : resolveSlots(s, op.target);
       for (const i of slots) damageThreat(s, i, op.n, controller, ev);
       return;
     }
+    /**
+     * Bring down an Omen, and pay for it.
+     *
+     * The only counterplay to an Omen in the game. Omens cannot be cleared,
+     * cannot be damaged, and (since overflow stopped discarding) cannot be
+     * pushed out either — so before this they were pure creeping dread with
+     * nothing on the other side of the decision.
+     *
+     * The Scar is not optional. Free Omen removal is too clean for what an
+     * Omen represents, and the point of the card is that the only way to clear
+     * the dread is to take on more corruption — the temptation engine firing
+     * exactly when the table feels most helpless.
+     *
+     * `chosen === DECLINE_KEY` means the player kept the card's other mode.
+     * Anything else is an Omen slot, and taking it CLEARS THE REST OF THE
+     * QUEUE — that is what "may instead" means, and it is why this op is
+     * written first on the card.
+     */
+    case 'banishOmen': {
+      if (chosen === undefined || chosen === DECLINE_KEY) return;
+      const slot = Number(chosen);
+      const sl = s.street[slot];
+      // Not an Omen: refuse rather than quietly clearing an ordinary Threat,
+      // which would make this the best removal in the game by accident.
+      if (!sl || card(sl.instance.cardId).type !== 'omen') return;
+      s.street[slot] = null;
+      ev.push({ t: 'THREAT_CLEARED', slot, cardId: sl.instance.cardId });
+      /*
+        "Instead": the rest of the card is skipped, and the Scar replaces it.
+
+        Written as a queue REPLACEMENT rather than as an inline scars++ so the
+        Scar goes through the ordinary `scar` op — which increments the counter
+        AND puts a dead card in the discard. Doing it by hand here would have
+        drifted from that the first time the `scar` op changed.
+      */
+      const price: Op = { op: 'scar', n: 1, target: op.target };
+      if (s.resolution) s.resolution.queue = [price];
+      else execOp(s, price, controller, ev);
+      return;
+    }
+    /**
+     * IT REMEMBERS YOUR NAME — look at the top of a deck; a Sign resolves.
+     *
+     * LOOKS AT. A non-Sign goes back untouched and is named in no event, so
+     * nothing about that deck escapes. The card only becomes public when it
+     * resolves, which everyone watches happen.
+     *
+     * The version this replaces discarded it either way, and `playerView`
+     * publishes every discard pile — so the card was public the moment it
+     * landed there, and keeping it out of the chronicle would have hidden the
+     * sentence rather than the information.
+     */
+    case 'callSign': {
+      const [pid] = chosen ? [chosen] : resolvePlayers(s, op.target, controller);
+      if (!pid) return;
+      const t = s.players[pid];
+      const top = t.deck[0];
+      if (!top) return;
+      if (card(top.cardId).type !== 'sign') {
+        ev.push({ t: 'NAME_READ', player: pid, resolved: false });
+        return;
+      }
+      t.deck.shift();
+      t.discard.push(top);
+      ev.push({ t: 'NAME_READ', player: pid, resolved: true, cardId: top.cardId });
+      // Against them, and unaimed: a card resolved by the Vessel is never
+      // aimed, which is what `opsFor(def, true)` without `aimed` means.
+      pushOps(s, opsFor(card(top.cardId), true), pid, top.cardId);
+      return;
+    }
+    /** SOMETHING COMES UP THE STREET. */
+    case 'summon': {
+      const slot = s.street.findIndex((sl) => sl === null);
+      if (slot === -1) return;
+      const next = s.supply.mythos.shift();
+      if (!next) return;
+      s.street[slot] = {
+        instance: next, damage: 0, turned: false,
+        enteredRound: s.round, escalation: 0,
+      };
+      ev.push({ t: 'THREAT_ENTERED', slot, cardId: next.cardId });
+      onThreatEntered(s, next.cardId, ev);
+      return;
+    }
+    /** NOT THAT ONE. The chosen type is off the table for a round. */
+    case 'shutter': {
+      const type = (chosen ?? 'kit') as CardType;
+      const until = s.round + s.tuning.shutterDuration;
+      s.shuttered = { type, untilRound: until };
+      ev.push({ t: 'SHUTTERED', cardType: type, untilRound: until });
+      return;
+    }
+    /** A GIFT, FREELY GIVEN. Two prompts: who, then which Sign. */
+    case 'gift': {
+      if (op.to === undefined) {
+        const pid = chosen ?? resolvePlayers(s, op.target, controller)[0];
+        if (!pid || s.players[pid]?.status !== 'posse') return;
+        // Ask again, this time for the Sign. Unshifted so the second half of
+        // one card's decision resolves before anything else on the queue.
+        if (s.resolution) s.resolution.queue.unshift({ ...op, to: pid });
+        return;
+      }
+      const t = s.players[op.to];
+      if (!t || t.status !== 'posse') return;
+      const id = chosen && SIGN_IDS.includes(chosen) ? chosen : SIGN_IDS[0]!;
+      const gift = newInstance(s, id, true);
+      gift.offeredUntil = s.round + 1;
+      t.discard.push(gift);
+      // No reward named. The target knowing the exact bounty on their own head
+      // changes the decision, so the payoff is logged when it PAYS, not now.
+      ev.push({ t: 'OFFERED', by: controller, target: op.to, cardId: id });
+      return;
+    }
     case 'destroy': {
+      // `all` is deliberately NOT honoured here: `resolveSlots` would return
+      // every slot and one card would empty the Street.
       const slots = chosen !== undefined ? [Number(chosen)]
-        : op.target === 'leftmostSlot' ? occupiedSlots(s).slice(0, 1) : [];
+        : op.target === 'all' ? [] : resolveSlots(s, op.target);
       for (const i of slots) clearThreat(s, i, controller, ev);
       return;
     }
@@ -526,6 +837,10 @@ export function execOp(
       const targets = chosen ? [chosen] : resolvePlayers(s, op.target, controller);
       for (const pid of targets) {
         const p = s.players[pid];
+        if (!p.hand.length) continue;
+        // The same gesture as ending a turn — a whole hand swept away — even
+        // though it is a card doing it to you rather than you doing it.
+        ev.push({ t: 'DISCARDED', player: pid, n: p.hand.length, hand: true });
         p.discard.push(...p.hand);
         p.hand = [];
       }
@@ -563,7 +878,7 @@ export function execOp(
       return;
     }
     case 'revealHand': {
-      // Marks the hand as known to the Old One. Consumed by playerView.
+      // Marks the hand as known to the Vessel. Consumed by playerView.
       const targets = chosen ? [chosen] : resolvePlayers(s, op.target, controller);
       for (const pid of targets) {
         if (!s.handsRevealedTo[pid]) s.handsRevealedTo[pid] = [];
@@ -574,9 +889,10 @@ export function execOp(
       return;
     }
     case 'cancelMenace': {
+      // `all` would silence the whole Street off one card; a ward is one slot.
       const slot = chosen !== undefined ? Number(chosen)
-        : op.target === 'leftmostSlot' ? occupiedSlots(s)[0]
-        : undefined;
+        : op.target === 'all' ? undefined
+        : resolveSlots(s, op.target)[0];
       if (slot === undefined) return;
       const sl = s.street[slot];
       if (!sl) return;
@@ -625,7 +941,15 @@ export function runQueue(s: GameState, ev: GameEvent[]): void {
     if (guard++ > 500) throw new Error('Op queue did not terminate');
     const op = s.resolution.queue[0];
     const ctrl = s.resolution.controller;
-    const needsChoice = op.op === 'scry' || ('target' in op && op.target === 'choose');
+    /*
+      `banishOmen` always asks, even with no Omen in the Street — it returns a
+      single option then, and the branch below resolves it silently. Asking
+      unconditionally is what keeps the "only when an Omen is in play" rule in
+      ONE place (`choiceOptions`) rather than duplicated as a guard here.
+    */
+    const needsChoice = op.op === 'scry' || op.op === 'banishOmen'
+      || op.op === 'shutter'
+      || ('target' in op && op.target === 'choose');
     if (needsChoice) {
       const options = choiceOptions(s, op, ctrl);
       if (options.length > 1) {

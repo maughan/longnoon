@@ -268,7 +268,7 @@ export class Hub {
     });
     // Everyone already here is present; the lobby starts assuming otherwise.
     for (const seatId of room.conns.keys()) room.lobby.reconnect(seatId, now);
-    return this.syncAll(room);
+    return this.deliver(room, room.lobby.room.deal());
   }
 
   private join(conn: string, roomId: string, name: string, now: number): Envelope[] {
@@ -331,7 +331,11 @@ export class Hub {
     return res.updates.flatMap((u) => {
       const target = room.conns.get(u.seat);
       return target
-        ? [{ conn: target, msg: { t: 'state' as const, view: u.view, events: u.events, legal: u.legal } }]
+        ? [{ conn: target, msg: {
+            t: 'state' as const,
+            view: u.view, events: u.events, legal: u.legal,
+            bots: room.lobby?.room.botSeats ?? [],
+          } }]
         : [];
     });
   }
@@ -491,7 +495,11 @@ export class Hub {
     return updates.flatMap((u) => {
       const target = room.conns.get(u.seat);
       return target
-        ? [{ conn: target, msg: { t: 'state' as const, view: u.view, events: u.events, legal: u.legal } }]
+        ? [{ conn: target, msg: {
+            t: 'state' as const,
+            view: u.view, events: u.events, legal: u.legal,
+            bots: room.lobby?.room.botSeats ?? [],
+          } }]
         : [];
     });
   }
@@ -500,7 +508,11 @@ export class Hub {
     return (room.lobby?.sync() ?? []).flatMap((u) => {
       const target = room.conns.get(u.seat);
       return target
-        ? [{ conn: target, msg: { t: 'state' as const, view: u.view, events: u.events, legal: u.legal } }]
+        ? [{ conn: target, msg: {
+            t: 'state' as const,
+            view: u.view, events: u.events, legal: u.legal,
+            bots: room.lobby?.room.botSeats ?? [],
+          } }]
         : [];
     });
   }

@@ -6,10 +6,17 @@ export type CardId = string;
 
 export type Phase = 'dawn' | 'day' | 'dusk' | 'turning' | 'over';
 export type Act = 'trouble' | 'mythos';
+/**
+ * What a seat IS. Every member of this union is a player at the table.
+ *
+ * `vessel` is the one the Old One is using. There is deliberately no `oldOne`
+ * status: the Old One is not a player and has no seat — see the note on
+ * `GameState.vessel`.
+ */
 export type Status =
   | 'posse'
   | 'revenant'
-  | 'oldOne'
+  | 'vessel'
   | 'gone';
 
 export type Role = 'faithful' | 'marked';
@@ -23,7 +30,16 @@ export type CardType =
   | 'scar'
   | 'trouble'
   | 'omen'
-  | 'mythos';
+  | 'mythos'
+  /**
+   * A card in the Vessel's deck, and nothing else.
+   *
+   * Its own type rather than a Sign, because `signsHeld` counts Signs and the
+   * Marked player's secret aim and `menacePerSign` both read that count — a
+   * Vessel holding ten of these would read as the most corrupt seat at the
+   * table by a mile. Never in the market, never bought, never shuttered.
+   */
+  | 'vessel';
 
 export type Target =
   | 'self'
@@ -33,6 +49,32 @@ export type Target =
   | 'mostSigns'
   | 'fewestCards'
   | 'leftmostSlot'
+  /**
+   * One occupied slot, drawn from the state RNG cursor.
+   *
+   * Deterministic — `randInt(seed, rngCursor)` and the cursor advances — but
+   * OPAQUE to the player, which is the point. A replay picks the same slot; a
+   * player cannot know which before they commit.
+   */
+  | 'random'
+  /**
+   * The occupied slot with the lowest EFFECTIVE Clear, escalation included.
+   *
+   * Reliably wrong rather than wrong on average: it spends itself on the
+   * easiest thing on the board while the Threat that has been growing since
+   * round two keeps growing.
+   */
+  | 'lowestClear'
+  /**
+   * Whatever `tuning.coltFeveredTarget` says one of the above is.
+   *
+   * The card face says "It Chooses"; this is the indirection that lets the
+   * simulator ask what choosing should MEAN without editing content. Content
+   * declares the fiction, TUNING decides the mechanism.
+   */
+  | 'itChooses'
+  /** Omen slots only — the exact inverse of what `damage` may touch. */
+  | 'omen'
   | 'firstTriggered'
   /** The Vessel, hit without a choice. Only meaningful for `damage` in Act II. */
   | 'vessel';
@@ -51,6 +93,57 @@ export type Op =
   | { op: 'trash'; n: number; from: 'hand' | 'deck'; target: Target; kind?: CardType }
   | { op: 'gainCard'; filter: CardFilter; target: Target }
   | { op: 'destroy'; target: Target }
+  /**
+   * "May instead destroy one Omen; if it does, <target> takes a Scar."
+   *
+   * The only answer to an Omen in the game, and it is a modal: offered a
+   * choice, the player either takes an Omen or declines. Taking one **clears
+   * the rest of the resolution queue**, which is what the word "instead"
+   * means — everything the card would otherwise have done is skipped.
+   *
+   * `target` is who pays the Scar, so the Fevered face is an ordinary
+   * `retarget` from `self` to `all` rather than a second mechanism.
+   */
+  | { op: 'banishOmen'; target: Target }
+  /**
+   * IT REMEMBERS YOUR NAME. Look at the top card of a chosen player's deck; if
+   * it is a Sign, it resolves Fevered against them.
+   *
+   * **Looks at, does not reveal**, and that distinction is load-bearing. A
+   * non-Sign goes back on top untouched and is never named in any event, so
+   * nothing about that deck escapes. The earlier version discarded the card
+   * either way — and `playerView` publishes every discard pile in full, so the
+   * card was public the instant it landed there. Keeping it out of the
+   * chronicle would have hidden the sentence and not the information.
+   */
+  | { op: 'callSign'; target: Target }
+  /** SOMETHING COMES UP THE STREET. A Mythos card into an empty slot. */
+  | { op: 'summon' }
+  /** NOT THAT ONE. Name a card type; nobody may play it next round. */
+  | { op: 'shutter' }
+  /**
+   * A GIFT, FREELY GIVEN. A chosen player gains a Fevered Sign on a timer.
+   *
+   * Not `gainCard`: that hands over a clean card with no string on it. The
+   * string — `offeredUntil`, and the Whispers it pays if they take the bait —
+   * is the whole card.
+   */
+  | {
+      op: 'gift'; target: Target;
+      /**
+       * The recipient, once picked. Absent on the printed card.
+       *
+       * A GIFT, FREELY GIVEN asks twice — who, then which Sign — and this is
+       * how one op spans two prompts without new machinery: the first
+       * resolution re-queues the op with `to` filled in, and `choiceOptions`
+       * offers Signs instead of players the second time round.
+       *
+       * A field on the op rather than a scratch slot on `GameState`, so the
+       * half-made decision travels in the resolution queue and survives being
+       * serialised mid-choice like everything else does.
+       */
+      to?: PlayerId;
+    }
   | { op: 'recover'; target: Target }
   /**
    * Night Watch: cancel one Threat's Menace for this round. Targets a Street
@@ -86,7 +179,31 @@ export interface FeveredOverride {
   name: string;
   /** op index -> replacement target. The primary corruption mechanism. */
   retarget?: Record<number, Target>;
+  /**
+   * A price paid AFTER the effect. The common case.
+   *
+   * The card does what it does, and then something is taken — you fire the
+   * Colt and then trash a card off your own deck.
+   */
   appendOps?: Op[];
+  /**
+   * A price paid BEFORE the effect, and the difference is not cosmetic.
+   *
+   * Paying first means the effect resolves against the world the payment made.
+   * "The Ledger Reads Itself" is the case that forced this: as
+   * `appendOps: [discardHand]` it drew three cards and then threw the whole
+   * hand away, which is not a card anybody plays. Prepended, the same two ops
+   * are a wheel — dump the hand you are stuck with, deal three fresh — and the
+   * corruption is that you no longer get to keep what you were holding.
+   *
+   * This is the fourth mechanism in the schema bet and it was added on
+   * evidence, not appetite: order is genuinely inexpressible with the other
+   * three, and "cost up front" vs "cost after" is a distinction any deck
+   * builder makes. If a FIFTH mechanism starts looking necessary, that is the
+   * signal CLAUDE.md warns about — reconsider the abstraction rather than
+   * extend it again.
+   */
+  prependOps?: Op[];
   constraints?: Constraint[];
 }
 
@@ -108,6 +225,14 @@ export interface Card {
    * "Nothing in Act II pays a Bounty. Ever." — this is the economy inversion
    * in DESIGN.md §7, and the reason Act I combat is generative.
    */
+  /**
+   * A line of the world, printed under the rules.
+   *
+   * DESIGN.md §1: ballad and scripture, invented frontier folklore. It carries
+   * no mechanics and the engine never reads it — but it is the only place the
+   * tone of the game reaches a player who is only looking at their hand.
+   */
+  flavour?: string;
   bounty?: Op[];
   /**
    * What it costs to be rid of this, when damage cannot do it.
@@ -135,9 +260,9 @@ export interface CardInstance {
   cardId: CardId;
   fevered: boolean;
   /**
-   * A gift from the Old One, and the round the string on it runs out.
+   * A gift from the Vessel, and the round the string on it runs out.
    *
-   * Set by OFFER. Playing it on or before this round pays the Old One — which
+   * Set by OFFER. Playing it on or before this round pays the Vessel — which
    * is the trap. Per instance, because the gift is this copy and not every copy
    * of that Sign everywhere.
    */
@@ -209,9 +334,42 @@ export interface Resolution {
 
 export type GameEvent =
   | { t: 'DREW'; player: PlayerId; n: number }
+  /**
+   * A player's discard has been shuffled back under them.
+   *
+   * Public — at a real table everyone watches you pick the pile up — and worth
+   * announcing: a deck cycling is when your Signs come round again, and for a
+   * Revenant it is the moment they shrink.
+   */
+  | { t: 'RESHUFFLED'; player: PlayerId; n: number }
+  /**
+   * Cards put onto a discard pile by the player who owned them.
+   *
+   * Counts only, never card ids: which cards are in a discard pile is public,
+   * but this event crosses to every seat and a list here would be a second
+   * channel to keep honest. `playerView` already publishes the pile.
+   *
+   * `hand` distinguishes the two gestures — sweeping a whole hand away at the
+   * end of a turn, and putting one card down during it. They sound different
+   * and they mean different things, and a count cannot tell them apart: a turn
+   * that played four of five cards ends by sweeping exactly one.
+   *
+   * Deliberately silent in the chronicle. It exists so the client has ONE
+   * source of truth for "a card went to a discard pile" rather than inferring
+   * it from GRIT here and a turn change there; what actually mattered — the
+   * cash-in, the turn ending — is already narrated by the thing that caused it.
+   */
+  | { t: 'DISCARDED'; player: PlayerId; n: number; hand: boolean }
   | { t: 'PLAYED'; player: PlayerId; cardId: CardId; fevered: boolean }
   | { t: 'BOUGHT'; player: PlayerId; cardId: CardId }
-  | { t: 'GRIT'; player: PlayerId; amount: number }
+  /**
+   * Grit arrived. `cards` names what was cashed in to get it.
+   *
+   * Absent when the Grit came from a card's effect instead — Lantern Oil hands
+   * you some without anything leaving your hand, and a log that said "cashed
+   * in" for that would be describing a move nobody made.
+   */
+  | { t: 'GRIT'; player: PlayerId; amount: number; cards?: CardId[] }
   | { t: 'DAMAGED'; player: PlayerId; amount: number; trashed: CardId[] }
   | { t: 'THREAT_DAMAGED'; slot: number; amount: number }
   | { t: 'THREAT_CLEARED'; slot: number; cardId: CardId }
@@ -223,6 +381,16 @@ export type GameEvent =
   | { t: 'MENACE_CANCELLED'; slot: number; by: PlayerId }
   | { t: 'TOLL_PAID'; slot: number; cardId: CardId; player: PlayerId }
   | { t: 'SHUTTERED'; cardType: CardType; untilRound: number }
+  /**
+   * IT REMEMBERS YOUR NAME looked at somebody's deck.
+   *
+   * `cardId` is present ONLY when the card resolved — everyone watched that
+   * happen, so it is already public. A card that was not a Sign went back on
+   * top untouched and is not named here, because the event itself is the leak
+   * vector: `visibleEvents` broadcasts it to every seat, so anything in it is
+   * public whatever the chronicle chooses to print.
+   */
+  | { t: 'NAME_READ'; player: PlayerId; resolved: boolean; cardId?: CardId }
   | { t: 'OFFERED'; by: PlayerId; target: PlayerId; cardId: CardId }
   | { t: 'OFFER_TAKEN'; player: PlayerId; cardId: CardId; whispers: number }
   | {
@@ -234,6 +402,15 @@ export type GameEvent =
   | { t: 'PREVENTED'; player: PlayerId; amount: number }
   | { t: 'SCRIED'; player: PlayerId; cardId: CardId }
   | { t: 'WHISPERS'; delta: number; total: number }
+  /**
+   * The Whisper track filled and broke over. Act II only.
+   *
+   * `fill` is which one this is (1-based), because the Doom escalates and the
+   * table wants to know it is escalating. `total` is what is LEFT on the bar
+   * afterwards — the remainder carries, so a big gain can fill the bar twice
+   * and still leave something behind, and each fill reports its own remainder.
+   */
+  | { t: 'WHISPER_FILL'; fill: number; doom: number; total: number }
   | { t: 'DOOM'; delta: number; total: number }
   | { t: 'FELL'; player: PlayerId; became: Status }
   | { t: 'LAST_WORDS'; player: PlayerId; fevered: boolean; kept: number }
@@ -283,11 +460,40 @@ export interface Tuning {
    * Patience used to be free. Leaving something alive now compounds.
    */
   escalationPerRound: number;
-  /** Whispers the Old One spends to CALL a Sign in a player's deck. */
-  callWhisperCost: number;
-  /** Whispers the Old One gains if a gifted Sign is actually played. */
+  /**
+   * Multiplier on every Whisper gained after the Turning.
+   *
+   * The threshold does NOT change at the Turning — the bar has to look
+   * identical or players relearn it halfway through the game. What changes is
+   * how fast it fills. Same bar, same distance, more pressure.
+   */
+  whisperRateMythos: number;
+  /**
+   * Doom awarded by the FIRST Act II fill, and how much each later fill adds.
+   *
+   * Escalating rather than flat, because Act II should accelerate towards
+   * collapse rather than tick along: fill one costs `doomPerFill`, fill two
+   * costs `doomPerFill + doomPerFillStep`, and so on. `whisperFills` counts.
+   */
+  doomPerFill: number;
+  doomPerFillStep: number;
+  /** Whispers the Vessel gains if a gifted Sign is actually played. */
   offerWhisperReward: number;
-  /** How many rounds a SHUTTER keeps a card type off the table. */
+  /**
+   * What "It Chooses" actually chooses — the Fevered Colt's target.
+   *
+   * A string rather than a number, so `sweep`'s numeric grid cannot reach it;
+   * `sim/colt.ts` compares the three directly. The question it settles is not
+   * about one card: it is whether a Fevered face should be PREDICTABLY bad
+   * (`leftmostSlot`, `lowestClear`) or merely bad ON AVERAGE (`random`), and
+   * the answer applies to all twelve Signs.
+   */
+  coltFeveredTarget: 'leftmostSlot' | 'random' | 'lowestClear';
+  /** How many of each card is in the Vessel's deck. Ten in all. */
+  vesselDeck: Record<string, number>;
+  /** The Vessel's deck stops shrinking here, so the endgame cannot stall. */
+  vesselDeckFloor: number;
+  /** How many rounds NOT THAT ONE keeps a card type off the table. */
   shutterDuration: number;
   /**
    * Whether a Threat that can never be cleared escalates too.
@@ -347,7 +553,7 @@ export interface Tuning {
    */
   menacePerSign: number;
   /**
-   * Doom the Old One starts with on top of the base 3 when the Marked player
+   * Doom the table starts with on top of the base 3 when the Marked player
    * achieved their secret aim: "at the Turning, two other players must each
    * hold 3 or more Signs." Set 0 to disable the aim.
    */
@@ -355,13 +561,13 @@ export interface Tuning {
   /** Grit a Beckoned player gains if they buy a Sign. */
   beckonGrit: number;
   /**
-   * Cards a Revenant or the Old One loses each time their deck recycles.
+   * Cards a Revenant or the Vessel loses each time their deck recycles.
    *
    * Burial was cut: it cost the posse two actions and a permanent Scar while the
    * Revenant paid one action to undo it, so it was never worth paying. This is
    * the replacement counter — the fallen burn out on their own, and the posse's
    * job is to outlast them rather than to dig a hole. A Revenant who runs out of
-   * cards entirely is gone for good; the Old One floors at one card so the
+   * cards entirely is gone for good; the Vessel floors at one card so the
    * endgame cannot stall.
    */
   revenantDecay: number;
@@ -397,17 +603,60 @@ export interface GameState {
   activePlayer: PlayerId;
   actionsLeft: number;
 
+  /**
+   * The Whisper track. One number, one meaning, in both acts: **when this
+   * fills, something bad happens.** It just happens more than once.
+   *
+   * Same threshold throughout — `tuning.whisperThreshold`, unchanged by the
+   * Turning, so the bar the player learned in Act I is the bar they are still
+   * reading in Act II. What fills it is what differs: gains are multiplied by
+   * `whisperRateMythos` after the Turning.
+   *
+   * **Never a currency.** It briefly was — a second field the Vessel spent
+   * from — and a meter that also serves as a wallet is how it went negative.
+   * Nothing subtracts from this.
+   *
+   * Always in `[0, whisperThreshold)` once a command has finished resolving.
+   */
   whispers: number;
+  /**
+   * How many times the track has filled in Act II.
+   *
+   * State rather than a derived count, because the Doom each fill costs
+   * escalates and there is nothing else to derive it from.
+   */
+  whisperFills: number;
   doom: number;
   vesselDamage: number;
   /**
-   * A card type the Old One has closed off, and the round it reopens.
+   * A card type the Vessel has closed off, and the round it reopens.
    *
    * Enforced in `legalCommands`, never in `apply`: a client has to be able to
    * SHOW a card as unplayable. Discovering it by having a command rejected is
    * the interface telling you the rules after the fact.
    */
   shuttered: { type: CardType; untilRound: number } | null;
+  /**
+   * Who the Old One is using. Null until the Turning.
+   *
+   * **The Vessel is the player; the Old One is the fiction.** They are one
+   * entity described at two layers, and only the player layer belongs in the
+   * interface:
+   *
+   * - The VESSEL is a status, a seat, a tag in the player list, a thing the
+   *   posse can shoot. Every rule, command, label and piece of UI text uses
+   *   this word. The posse's win condition says it out loud — they bury the
+   *   Vessel, a body. Closing the door is not killing what is behind it.
+   * - The OLD ONE is what is using them. Never a player, never a status, never
+   *   in the player list. It is what the Doom track counts and what came
+   *   through the door at the Turning, and you never interact with it, so it
+   *   does not need a seat.
+   *
+   * This field and `players[vessel].status === 'vessel'` are set together in
+   * `checkTurning` and neither is ever reassigned. They used to disagree on
+   * naming — the status was `'oldOne'` — which put two tags on one seat with
+   * no difference between them.
+   */
   vessel: PlayerId | null;
   revealedRoles: PlayerId[];
 
@@ -424,7 +673,7 @@ export interface GameState {
      *
      * Act II needs one because the Street now takes three or four Threats a
      * round against a ten-card deck — without it the Mythos runs out around
-     * round three of a five-round act and the Old One stops arriving.
+     * round three of a five-round act and the Vessel stops arriving.
      */
     mythosDiscard: CardInstance[];
   };
@@ -440,6 +689,14 @@ export interface GameState {
   shields: Record<PlayerId, number>;
   pending: PendingChoice | null;
   resolution: Resolution | null;
+  /**
+   * Which SIDE won, which is not the same question as which seat.
+   *
+   * `'oldOne'` survives the Vessel rename deliberately: the loser's condition
+   * is the thing behind the door getting through, and a Revenant wins with it
+   * without ever being the Vessel. It is also never rendered — the client
+   * prints "The long noon" — so it is a discriminant, not a label.
+   */
   winner: 'posse' | 'oldOne' | null;
   tuning: Tuning;
   uidCounter: number;
@@ -461,12 +718,19 @@ export type Command =
   | { t: 'PAY_TOLL'; slot: number }
   | { t: 'RESOLVE_CHOICE'; choiceId: string; picks: string[] }
   | { t: 'END_TURN' }
-  | { t: 'CALL'; target: PlayerId }
+  /*
+    The Vessel has NO commands of its own.
+
+    CALL, SUMMON, SHUTTER, OFFER and the Vessel's WHISPER used to live here.
+    Their effects survive as ops on cards in the Vessel's deck; only the
+    command types are gone, and they are gone rather than unreachable.
+
+    Two things that buys. Everyone at the table now interacts through the same
+    four verbs, so there is no second interface to build or explain. And the
+    dominant-action problem stops recurring by construction: a safe option that
+    is a permanent button gets pressed every turn, and one that has to be drawn
+    cannot be.
+  */
   // Revenant
   | { t: 'REVENANT_WHISPER'; uid: string }
-  | { t: 'BECKON'; target: PlayerId }
-  | { t: 'SUMMON'; slot: number }
-  /** Old One: no player may play this card type on their next turn. */
-  | { t: 'SHUTTER'; cardType: CardType }
-  /** Old One: hand a living player a Sign, free, and hope they use it. */
-  | { t: 'OFFER'; target: PlayerId; cardId: CardId };
+  | { t: 'BECKON'; target: PlayerId };

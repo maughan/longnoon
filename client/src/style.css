@@ -146,9 +146,7 @@ svg {
 .chip,
 .pilebtn,
 .track,
-.card .whisper,
 .slot .name,
-.card .title,
 .glossary dt,
 .tip strong,
 .sheet-head button {
@@ -170,32 +168,6 @@ svg {
   display: flex;
   flex-wrap: wrap;
   gap: 0.1rem 0.7rem;
-}
-
-/* The type mark on a card sits with the name, at the weight of a bullet. */
-.card .title {
-  align-items: flex-start;
-  gap: 0.35rem;
-}
-.card .title .mark {
-  margin-top: 0.1rem;
-  opacity: 0.75;
-}
-.card.sign .mark {
-  color: var(--sign);
-}
-.card.kit .mark {
-  color: var(--kit);
-}
-.card.deed .mark {
-  color: var(--deed);
-}
-.card.scar .mark {
-  color: var(--blood);
-}
-.card.fevered .mark {
-  color: var(--sign);
-  opacity: 1;
 }
 
 button {
@@ -374,6 +346,20 @@ label {
 .track.whisper > svg {
   color: var(--sign);
 }
+
+/* Wounds are blood, and smaller — a card is not a header. */
+.pips.hurt .pip.on {
+  background: var(--blood);
+  border-color: var(--blood);
+  box-shadow: 0 0 6px -1px var(--blood);
+}
+.pips.small {
+  gap: 2px;
+}
+.pips.small .pip {
+  width: 5px;
+  height: 10px;
+}
 .pips {
   display: flex;
   gap: 3px;
@@ -427,21 +413,6 @@ label {
 }
 .turnflag.mine {
   color: var(--lamp);
-}
-.turnflag.busy::after {
-  content: "…";
-  animation: dots 1.4s steps(4) infinite;
-}
-@keyframes dots {
-  0% {
-    content: ".";
-  }
-  33% {
-    content: "..";
-  }
-  66% {
-    content: "…";
-  }
 }
 
 /* --- middle: the Street, and nothing else ------------------------------ */
@@ -514,17 +485,12 @@ label {
     0 10px 26px -14px #000,
     0 0 26px -6px var(--sign);
 }
+/* Damage taken, one pip a point. Sits under the card, because it is state the
+ * Threat has accumulated rather than anything printed on it. */
 .wound {
-  height: 4px;
+  display: flex;
+  justify-content: center;
   width: 168px;
-  background: #2b2630;
-  border-radius: 2px;
-}
-.wound div {
-  height: 100%;
-  background: var(--blood);
-  border-radius: 2px;
-  transition: width 0.3s ease;
 }
 .hush {
   font-size: 0.68rem;
@@ -645,6 +611,48 @@ label {
   padding: 0.4rem 0.1rem 0;
 }
 
+/* --- a pile, spread out -------------------------------------------------
+ *
+ * `.sheet-inner` is a two-row grid (head, then body). The pile sheet adds a
+ * line of explanation between them, so it needs its own row template — without
+ * this the note lands in an implicit third row and the card grid loses its
+ * `minmax(0, 1fr)`, which is the thing that makes it scroll instead of pushing
+ * the sheet off the bottom of the screen.
+ */
+.pilesheet {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+.pilesheet-count {
+  font-size: 0.8rem;
+  color: var(--ink-dim);
+  letter-spacing: 0.04em;
+}
+.pilesheet-note {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--ink-dim);
+  font-style: italic;
+  max-width: 44rem;
+}
+/* A card in the grid is a button, and must not look like one. */
+.shelfcard {
+  background: none;
+  border: 0;
+  padding: 0;
+  border-radius: 3px;
+  cursor: zoom-in;
+  line-height: 0;
+  transition: transform 0.12s ease;
+}
+.shelfcard:hover,
+.shelfcard:focus-visible {
+  transform: translateY(-3px);
+}
+.shelfcard:focus-visible {
+  outline: 2px solid var(--edge-bright, #6b5490);
+  outline-offset: 2px;
+}
+
 /* --- the right rail --------------------------------------------------- */
 
 .side {
@@ -709,6 +717,9 @@ label {
 .vitals {
   font-size: 0.74rem;
   color: var(--ink-mute);
+  display: flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .chronicle {
@@ -790,7 +801,7 @@ label {
   gap: 0.55rem;
   overflow-x: auto;
   padding: 0.25rem 0 0.4rem;
-  align-items: flex-end;
+  align-items: center;
   min-height: calc(var(--card-h) + 0.65rem);
 }
 
@@ -966,6 +977,11 @@ label {
   font-size: 0.68rem;
   letter-spacing: 0.12em;
   font-variant-caps: small-caps;
+  /* "cash in for 2 Grit" is longer than the counter is wide — let it wrap
+     rather than push the box out of the row while a card is in the air. */
+  max-width: 5.6rem;
+  text-align: center;
+  line-height: 1.25;
 }
 .counter:hover {
   border-color: var(--lamp);
@@ -1051,6 +1067,28 @@ label {
 }
 .card.pickable:focus-visible svg {
   box-shadow: 0 0 0 2px var(--lamp);
+}
+
+/* Landing.
+ *
+ * `backwards` is what makes the stagger work: without it a card is fully
+ * visible during its delay and then animates, so five cards appear at once and
+ * then shuffle themselves. With it, each holds the `from` state until its turn.
+ *
+ * The delay is set per card in App.tsx, beside the audio timings it matches. */
+@keyframes dealt {
+  from {
+    opacity: 0;
+    transform: translateY(30px) rotate(-5deg);
+  }
+}
+.fan .card {
+  animation: dealt 0.3s cubic-bezier(0.2, 0.85, 0.3, 1) backwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .fan .card {
+    animation: none;
+  }
 }
 
 .card.draggable {
@@ -1372,6 +1410,151 @@ label {
   display: flex;
   justify-content: flex-end;
   padding: 0.6rem 1.4rem 1.1rem;
+}
+
+/* A seat nobody is driving. Quiet on purpose — it is a fact about the chair,
+ * not about the game, and it sits next to names that carry real news
+ * (Marked, the Vessel, fallen) which must stay louder than it. */
+.bottag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.22rem;
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  border: 1px solid var(--edge);
+  border-radius: 2px;
+  padding: 0 0.25rem;
+}
+.bottag svg {
+  opacity: 0.85;
+}
+.whowas .bottag {
+  margin-left: 0.4rem;
+}
+
+/* Hearing one effect on demand — the answer to "is it the volume or the
+ * wiring". Lives beside the effects slider because that is where someone
+ * already is when they ask. */
+.hearit {
+  display: grid;
+  gap: 0.3rem;
+}
+.hearit .name {
+  font-variant-caps: small-caps;
+  letter-spacing: 0.12em;
+  font-size: 0.82rem;
+}
+.hearit .row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.hearit button {
+  font-size: 0.74rem;
+  padding: 0.2rem 0.5rem;
+}
+.hearit .hint {
+  margin: 0;
+}
+
+/* --- looking at a card closely ------------------------------------------ */
+
+/* Its own control, in the corner the badges do not use. Hidden until the card
+ * is hovered or focused, so a hand of five is not a row of five buttons. */
+.lens {
+  position: absolute;
+  top: 0.2rem;
+  left: 0.2rem;
+  z-index: 2;
+  display: none;
+  padding: 0.18rem 0.22rem;
+  line-height: 0;
+  background: #1a1620dd;
+  border-color: var(--edge);
+}
+.card:hover .lens,
+.card:focus-within .lens,
+.slot:hover .lens,
+.slot:focus-within .lens,
+.lens:focus-visible {
+  display: block;
+}
+.lens:hover {
+  color: var(--lamp);
+  border-color: var(--lamp);
+}
+
+.zoom .sheet-inner {
+  width: min(56rem, 100%);
+}
+.zoom-body {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 1.6rem;
+  overflow: auto;
+  padding: 0.2rem 0.2rem 0;
+}
+.zoom-card {
+  display: grid;
+  gap: 0.6rem;
+  justify-items: center;
+}
+.zoom-card svg {
+  border-radius: 6px;
+  box-shadow: 0 18px 40px -18px #000;
+}
+.zoom-card .muted {
+  max-width: 20rem;
+  text-align: center;
+}
+.zoom-terms {
+  display: grid;
+  gap: 0.7rem;
+  align-content: start;
+}
+.zoom-terms h2 {
+  margin: 0;
+}
+.zoom-terms dl {
+  margin: 0;
+  display: grid;
+  gap: 0.7rem;
+}
+.zoom-terms dt {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-variant-caps: small-caps;
+  letter-spacing: 0.08em;
+  color: var(--lamp);
+}
+.zoom-terms dd {
+  margin: 0.1rem 0 0;
+  color: var(--ink-dim);
+  font-size: 0.86rem;
+}
+.zoom-terms dd strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+/* What a Sign becomes reads first: it is the decision, not a footnote. */
+.zoom-turn {
+  border-left: 2px solid var(--sign);
+  padding-left: 0.7rem;
+}
+.zoom-turn h2 {
+  color: var(--sign);
+}
+.zoom-turn p {
+  margin: 0.2rem 0 0;
+  font-size: 0.9rem;
+}
+.zoom .opts {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 0.9rem;
 }
 
 /* --- settings ----------------------------------------------------------- */

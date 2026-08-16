@@ -29,7 +29,25 @@ export const TUNING: Tuning = {
   // here. Swept vesselClear x doomTarget and vesselClear x startingDeckSize;
   // this is the cell where Balanced beats both extremes by the widest margin
   // and neither extreme is close.
-  vesselClear: 22,
+  // (re-measured after the Act II Whisper cycle landed) Was 22. The cycle is a
+  // whole second Doom source and Act II got correspondingly shorter, so the
+  // same burial target became unreachable again — Balanced 19.2% at 22 against
+  // 50.8% at 14, with Zealot 5.0% and Puritan 0.0%. Same lesson as last time:
+  // vesselClear is the lever that absorbs a change to Act II's length.
+  // (re-measured after the Colt/Dynamite split) Was 14. Both Street-facing
+  // Signs got weaker in the same pass — the Colt was briefly damage instead of
+  // a destroy, and Dynamite went from "destroy any Threat" to "2 damage to
+  // all, or an Omen". Reverting the Colt recovered half of it; Dynamite is the
+  // other half and is staying. Swept 10/12/14: Balanced 37.5 / 33.3 / 27.5%,
+  // Zealot 10.8 / 7.5 / 2.5%, and the interior optimum holds at every value —
+  // Balanced beats both extremes throughout, so this is a pure difficulty dial
+  // rather than a change in shape. 12 puts Balanced back near its historical
+  // 33% without handing Zealot double figures.
+  //
+  // FOURTH time this number has absorbed a change to the posse's answer to the
+  // Street (Bounties 34->36, the Street changes 31->22, the Whisper cycle
+  // 22->14, this 14->12). It is the lever; doomTarget is not.
+  vesselClear: 12,
   // (measured) Paper had 20, giving Act II barely two rounds. 50 gives the Old
   // One room to be ground down over ~5 rounds instead. Raising this alone just
   // makes the game easier — it only lengthens Act II paired with vesselClear.
@@ -58,14 +76,57 @@ export const TUNING: Tuning = {
   // moved when someone bought a Sign, so a cautious table could idle for ever
   // and the temptation engine never fired.
   escalationPerRound: 1,
-  // The Old One's actions are paid for out of what the table gave away. One
-  // Whisper a CALL means a posse that stops buying Signs in Act II starves the
-  // seat — which is a real choice, since Signs are all there is left to buy.
-  callWhisperCost: 1,
+  // (to be measured) The threshold does NOT move at the Turning — the bar has
+  // to look identical or the player relearns it halfway through the game. The
+  // RATE moves instead: every Whisper gained in Act II counts double.
+  whisperRateMythos: 2.0,
+  // (to be measured) Escalating, so Act II accelerates towards collapse rather
+  // than ticking along: +2 on the first fill, +3 on the second, +4 on the
+  // third. This is Doom's reliable player-driven source now that the Vessel's
+  // flat +2 action is gone.
+  doomPerFill: 2,
+  doomPerFillStep: 1,
   // A gift used in time pays about what one Sign play costs the table.
   offerWhisperReward: 2,
+  // (to be measured) How many of each card the Vessel's deck holds. Ten in
+  // all, sweepable so the mix can be argued with — `long-noon` is the safe one
+  // and its count is the dial on how often the seat has nothing sharp to do.
+  vesselDeck: {
+    'your-name': 2, 'up-the-street': 2, 'not-that-one': 2,
+    'freely-given': 2, 'long-noon': 2,
+  },
+  // The Vessel's deck shrinks one card per recycle, like a Revenant's, and
+  // stops here. A floor rather than zero: an empty-handed Vessel stalls the
+  // endgame with nobody able to end it.
+  vesselDeckFloor: 1,
+  // (measured, chosen) RANDOM. "It Chooses" implies agency, and this is the
+  // reading that gives it some: you play the card and find out.
+  //
+  // Measured over 400 real Act II boards (avg 2.3 live Threats), scoring each
+  // mode against the shot a competent player would have taken:
+  //
+  //     mode          value kept  hits best  post-Turning win  sd across blocks
+  //     leftmostSlot       59.5%      32.6%             45.4%              10.6
+  //     random             67.4%      50.0%             41.4%               4.7
+  //     lowestClear        90.5%      58.4%             48.5%               5.5
+  //
+  // Two results worth keeping. `lowestClear` is barely a corruption at all —
+  // with 4 damage against ~2.3 Threats, finishing the easiest one is usually
+  // what you would have done anyway, so it keeps 90% of the best shot and has
+  // the HIGHEST win rate. A Fevered face drifting toward an upgrade is the one
+  // thing the design cannot allow, so it is out.
+  //
+  // And `random` does not widen the win distribution the way it was expected
+  // to: sd 4.7 against leftmostSlot's 10.6. leftmostSlot is the volatile one,
+  // because whether the leftmost slot is the right slot is pure arrival order.
+  //
+  // Chosen over leftmostSlot as a design call: leftmostSlot keeps less value
+  // (59.5%) and preserves a decision you can decline, but random costs the
+  // posse the most (41.4%) and reads as a gun with a mind rather than a gun
+  // with a default.
+  coltFeveredTarget: 'random',
   // One round. Long enough to wreck a plan, short enough that a bad guess
-  // costs the Old One a turn rather than the posse a game.
+  // costs the Vessel a turn rather than the posse a game.
   shutterDuration: 1,
   // (measured) Off. An Omen arriving in round 2 would otherwise be dealing 8+
   // Menace by round 9, unanswerably — it cannot be cleared and, now that
@@ -125,15 +186,21 @@ export const STARTING_DECK: CardId[] = [
 type CardId = string;
 
 const STARTERS: Card[] = [
-  { id: 'saddlebag', name: 'Saddlebag', type: 'kit', grit: 1, ops: [] },
-  { id: 'six-gun', name: 'Six-Gun', type: 'kit', grit: 1,
+  { id: 'saddlebag', name: 'Saddlebag',
+    flavour: "Everything you own, and room for more.", type: 'kit', grit: 1, ops: [] },
+  { id: 'six-gun', name: 'Six-Gun',
+    flavour: "Six answers. Most questions need one.", type: 'kit', grit: 1,
     ops: [{ op: 'damage', n: 1, target: 'choose' }] },
-  { id: 'canteen', name: 'Canteen', type: 'kit', grit: 1,
+  { id: 'canteen', name: 'Canteen',
+    flavour: "Warm, and half sand. Still water.", type: 'kit', grit: 1,
     ops: [{ op: 'draw', n: 1, target: 'self' }] },
-  { id: 'grubstake', name: 'Grubstake', type: 'kit', grit: 2, ops: [] },
-  { id: 'bad-nerve', name: 'Bad Nerve', type: 'kit', grit: 0,
+  { id: 'grubstake', name: 'Grubstake',
+    flavour: "Somebody believed in you once, in writing.", type: 'kit', grit: 2, ops: [] },
+  { id: 'bad-nerve', name: 'Bad Nerve',
+    flavour: "Your hands knew before you did.", type: 'kit', grit: 0,
     ops: [{ op: 'draw', n: 2, target: 'self' }, { op: 'trash', n: 1, from: 'hand', target: 'self' }] },
-  { id: 'scar', name: 'Scar', type: 'scar', grit: 0, ops: [] },
+  { id: 'scar', name: 'Scar',
+    flavour: "It healed. That is all it did.", type: 'scar', grit: 0, ops: [] },
 ];
 
 /** id -> copies in the 20-card, never-reshuffled Provision deck. */
@@ -144,24 +211,34 @@ export const PROVISION_COUNTS: Record<string, number> = {
 };
 
 const PROVISIONS: Card[] = [
-  { id: 'winchester', name: 'Winchester', type: 'kit', cost: 3, grit: 1,
+  { id: 'winchester', name: 'Winchester',
+    flavour: "Reaches further than a man can argue.", type: 'kit', cost: 3, grit: 1,
     ops: [{ op: 'damage', n: 2, target: 'choose' }] },
-  { id: 'scattergun', name: 'Scattergun', type: 'kit', cost: 4, grit: 1,
+  { id: 'scattergun', name: 'Scattergun',
+    flavour: "For when the trouble arrives all at once.", type: 'kit', cost: 4, grit: 1,
     ops: [{ op: 'damage', n: 3, target: 'choose' }] },
-  { id: 'hard-tack', name: 'Hard Tack', type: 'kit', cost: 2, grit: 2, ops: [] },
-  { id: 'docs-bag', name: "Doc Mireles' Bag", type: 'kit', cost: 4, grit: 1,
+  { id: 'hard-tack', name: 'Hard Tack',
+    flavour: "Breaks teeth. Keeps men.", type: 'kit', cost: 2, grit: 2, ops: [] },
+  { id: 'docs-bag', name: "Doc Mireles' Bag",
+    flavour: "Doc Mireles never lost a patient he liked.", type: 'kit', cost: 4, grit: 1,
     ops: [{ op: 'recover', target: 'self' }] },
-  { id: 'sheriffs-star', name: "The Sheriff's Star", type: 'kit', cost: 5, grit: 2,
+  { id: 'sheriffs-star', name: "The Sheriff's Star",
+    flavour: "Tin. It has never stopped anything alone.", type: 'kit', cost: 5, grit: 2,
     ops: [{ op: 'actions', n: 1 }] },
-  { id: 'lantern-oil', name: 'Lantern Oil', type: 'deed', cost: 2, grit: 1,
+  { id: 'lantern-oil', name: 'Lantern Oil',
+    flavour: "An hour of light, bought against the dark.", type: 'deed', cost: 2, grit: 1,
     ops: [{ op: 'damage', n: 2, target: 'choose' }] },
-  { id: 'good-stuff', name: 'A Bottle of the Good Stuff', type: 'deed', cost: 2, grit: 1,
+  { id: 'good-stuff', name: 'A Bottle of the Good Stuff',
+    flavour: "Courage, decanted. Effect varies.", type: 'deed', cost: 2, grit: 1,
     ops: [{ op: 'draw', n: 2, target: 'self' }] },
-  { id: 'good-rope', name: 'Good Rope', type: 'kit', cost: 3, grit: 2,
+  { id: 'good-rope', name: 'Good Rope',
+    flavour: "Forty feet of second chances.", type: 'kit', cost: 3, grit: 2,
     ops: [{ op: 'draw', n: 1, target: 'self' }] },
-  { id: 'fresh-horses', name: 'Fresh Horses', type: 'kit', cost: 3, grit: 1,
+  { id: 'fresh-horses', name: 'Fresh Horses',
+    flavour: "The country is wide. Be wider.", type: 'kit', cost: 3, grit: 1,
     ops: [{ op: 'actions', n: 1 }] },
-  { id: 'bank-draft', name: 'Bank Draft', type: 'kit', cost: 4, grit: 3, ops: [] },
+  { id: 'bank-draft', name: 'Bank Draft',
+    flavour: "A promise from men who have never been here.", type: 'kit', cost: 4, grit: 3, ops: [] },
 ];
 
 // ---------------------------------------------------------------------------
@@ -188,25 +265,78 @@ const SIGNS: Card[] = [
   //      before Signs, so firing the corrupted card burns away the honest part
   //      of your deck and leaves you more corrupt. Signs stay powerful and get
   //      more expensive to point — they do not get weaker.
-  { id: 'colt', name: "The Colt That Doesn't Miss", type: 'sign', cost: 4, grit: 2, whispers: 3,
+  // DEPTH. The Colt answers one whole Threat; Dynamite answers a crowded
+  // Street. They used to BOTH read "destroy a Threat", which wasted a slot in
+  // a set of twelve — the split is what fixed that, not the destroy/damage
+  // question underneath it.
+  //
+  // (measured, reverted) It was 4 damage for a while, on the argument that
+  // `destroy` sits outside the pace engine: escalation adds +1 Clear every
+  // Dusk and an auto-answer never gets worse as the game gets harder. That
+  // argument is still true. It was reverted anyway because the price was too
+  // high — taking the auto-answers out of the posse's hands moved mixed-table
+  // wins from 26.0% to 5.7%, and `vesselClear` was not the lever that wanted
+  // to absorb it. Depth vs breadth was worth having; this was not.
+  //
+  // The Fevered face is a PURE RETARGET — no appended ops, no constraints. It
+  // still never misses; what corruption takes is the choosing, which is what
+  // the name has always said.
+  { id: 'colt', name: "The Colt That Doesn't Miss",
+    flavour: "It has never missed. You have never aimed it.", type: 'sign', cost: 4, grit: 2, whispers: 3,
     ops: [{ op: 'destroy', target: 'choose' }],
-    fevered: { name: 'It Chooses', retarget: { 0: 'leftmostSlot' } } },
+    fevered: { name: 'It Chooses', retarget: { 0: 'itChooses' } } },
 
-  { id: 'parson', name: "Parson Grimm's Blessing", type: 'sign', cost: 3, grit: 2, whispers: 2,
+  { id: 'parson', name: "Parson Grimm's Blessing",
+    flavour: "He blesses whatever asks to be blessed.", type: 'sign', cost: 3, grit: 2, whispers: 2,
     ops: [{ op: 'recover', target: 'choose' }],
     fevered: { name: 'The Parson Knows Better', retarget: { 0: 'mostSigns' } } },
 
-  { id: 'dynamite', name: 'Dynamite From the Old Shaft', type: 'sign', cost: 3, grit: 2, whispers: 2,
-    ops: [{ op: 'destroy', target: 'choose' }],
+  // BREADTH, and the only answer to an Omen in the game.
+  //
+  // `banishOmen` is written FIRST because taking it clears the rest of the
+  // queue — that is the "may instead". Decline and the blast runs; take an
+  // Omen and nothing else on the card happens.
+  //
+  // Both Fevered differences are one ordinary mechanism each, which is the
+  // test that this shape is right rather than clever:
+  //   retarget 0: self -> all  — every player takes the Scar
+  //   appendOps                — every player takes the blast too, and it is
+  //                              skipped automatically when an Omen is taken,
+  //                              because the queue is already empty by then.
+  { id: 'dynamite', name: 'Dynamite From the Old Shaft',
+    // (measured, chosen) 4. Swept 3/4/5/6 at 200 games per cell with the Colt
+    // held at 4 as a control. The headline number is Omen counterplay: games
+    // ending with an Omen still in the Street run 97.5% at cost 3, 42.5% at 4,
+    // 27.0% at 5. Three is too dear to reach for and Omens stay unanswerable;
+    // five makes it a third of every Sign bought.
+    //
+    // READ THE CAVEAT BEFORE RE-SWEEPING. `Balanced` and `Greedy` buy through
+    // `dearest()` — the most expensive affordable Sign — so purchase share in
+    // that sweep tracks PRICE RANK, not desirability, and it is non-monotonic
+    // for exactly that reason (bought more at 5 than at 3, because at 5 it
+    // outranks the Colt). Any future price work wants a value-aware `pick`
+    // first, or the table measures the bot.
+    flavour: "The shaft gave it up. The shaft wants it back.", type: 'sign', cost: 4, grit: 2, whispers: 2,
+    ops: [
+      { op: 'banishOmen', target: 'self' },
+      { op: 'damage', n: 2, target: 'all' },
+    ],
     fevered: { name: 'The Shaft Remembers',
-      appendOps: [{ op: 'trash', n: 1, from: 'deck', target: 'all' }] } },
+      retarget: { 0: 'all' },
+      appendOps: [{ op: 'trash', n: 2, from: 'deck', target: 'all' }] } },
 
-  { id: 'debt', name: 'A Debt Comes Due', type: 'sign', cost: 2, grit: 2, whispers: 2,
+  { id: 'debt', name: 'A Debt Comes Due',
+    flavour: "Everything is borrowed. Nothing is forgotten.", type: 'sign', cost: 2, grit: 2, whispers: 2,
     ops: [{ op: 'draw', n: 3, target: 'self' }],
+    // Discard FIRST, then draw — a wheel, not a bonfire. Appended, the two ops
+    // drew three cards and immediately threw them away with everything else,
+    // which is a card you would simply never play. Prepended, the debt is
+    // called in before the money arrives, which is also what the name says.
     fevered: { name: 'The Ledger Reads Itself',
-      appendOps: [{ op: 'discardHand', target: 'self' }] } },
+      prependOps: [{ op: 'discardHand', target: 'self' }] } },
 
-  { id: 'night-watch', name: 'Night Watch', type: 'sign', cost: 3, grit: 2, whispers: 2,
+  { id: 'night-watch', name: 'Night Watch',
+    flavour: "Something keeps watch. It is not you.", type: 'sign', cost: 3, grit: 2, whispers: 2,
     // "Once per round, cancel one Threat's Menace." Ruled a one-shot: you play
     // it, it cancels, it goes to the discard like anything else.
     ops: [{ op: 'cancelMenace', target: 'choose' }],
@@ -221,24 +351,29 @@ const SIGNS: Card[] = [
   // deck. It briefly carried Vessel-facing Fevered damage, which turned it into
   // a pure battery: never played, so its 3 Whispers were never paid, and it
   // cashed out as free Act II damage. "Buy the dearest card" then won 96%.
-  { id: 'last-words', name: 'Last Words', type: 'sign', cost: 4, grit: 2, whispers: 3,
+  { id: 'last-words', name: 'Last Words',
+    flavour: "Say them early. They will be said.", type: 'sign', cost: 4, grit: 2, whispers: 3,
     ops: [], passive: 'onFall:keepTwo',
     fevered: { name: "He Didn't Stay Down" } },
 
-  { id: 'hymn', name: 'The Hymn With No Author', type: 'sign', cost: 3, grit: 2, whispers: 2,
+  { id: 'hymn', name: 'The Hymn With No Author',
+    flavour: "Nobody wrote it. Everybody knows the second verse.", type: 'sign', cost: 3, grit: 2, whispers: 2,
     ops: [{ op: 'actions', n: 2 }],
     fevered: { name: 'You Know All the Verses', constraints: ['mustPlayOnDraw'] } },
 
-  { id: 'certainty', name: "Prospector's Certainty", type: 'sign', cost: 2, grit: 2, whispers: 1,
+  { id: 'certainty', name: "Prospector's Certainty",
+    flavour: "He knew where to dig. He never said how.", type: 'sign', cost: 2, grit: 2, whispers: 1,
     ops: [{ op: 'grit', n: 3 }],
     fevered: { name: 'He Never Stopped Digging', constraints: ['mustBuySignIfAble'] } },
 
-  { id: 'stake-claim', name: 'Stake the Claim', type: 'sign', cost: 2, grit: 2, whispers: 1,
+  { id: 'stake-claim', name: 'Stake the Claim',
+    flavour: "Drive it deep. Something reads the name.", type: 'sign', cost: 2, grit: 2, whispers: 1,
     ops: [{ op: 'gainCard', filter: { from: 'provisionRow' }, target: 'self' }],
     fevered: { name: 'The Claim Stakes You', retarget: { 0: 'left' },
       appendOps: [{ op: 'whisper', n: 1 }] } },
 
-  { id: 'coyote', name: 'What the Coyote Told Me', type: 'sign', cost: 2, grit: 2, whispers: 1,
+  { id: 'coyote', name: 'What the Coyote Told Me',
+    flavour: "She tells the truth. That is the trick.", type: 'sign', cost: 2, grit: 2, whispers: 1,
     // "Look at the top 3 cards of the Threat deck. Reorder them." Implemented as
     // choosing which of the three comes next — a full reorder cannot be
     // expressed as a legalCommands option without enumerating permutations.
@@ -251,7 +386,8 @@ const SIGNS: Card[] = [
         { op: 'trash', n: 1, from: 'deck', target: 'self' },
       ] } },
 
-  { id: 'salt-line', name: 'Salt Line at the Door', type: 'sign', cost: 3, grit: 2, whispers: 2,
+  { id: 'salt-line', name: 'Salt Line at the Door',
+    flavour: "Salt remembers where the door was.", type: 'sign', cost: 3, grit: 2, whispers: 2,
     // "Prevent 2 damage to any player." A buffer that waits to be spent.
     ops: [{ op: 'shield', n: 2, target: 'choose' }],
     fevered: { name: 'The Line Has Been Crossed',
@@ -261,69 +397,124 @@ const SIGNS: Card[] = [
         { op: 'trash', n: 1, from: 'deck', target: 'self' },
       ] } },
 
-  { id: 'widow', name: "The Widow's Instruction", type: 'sign', cost: 3, grit: 2, whispers: 2,
+  { id: 'widow', name: "The Widow's Instruction",
+    flavour: "She buried three. She knows the ground.", type: 'sign', cost: 3, grit: 2, whispers: 2,
     ops: [{ op: 'trash', n: 1, from: 'hand', target: 'self' }],
     fevered: { name: 'She Has Other Instructions',
       appendOps: [{ op: 'gainCard', filter: { type: 'sign', maxCost: 2, from: 'signs' }, target: 'self' }] } },
 ];
 
+// ---------------------------------------------------------------------------
+// The Vessel's deck.
+//
+// These used to be five buttons on a bespoke action menu. Cards instead, for
+// two reasons that are both structural rather than cosmetic:
+//
+//   - one interface. Everyone at the table plays a card, spends for coin, buys
+//     where permitted and ends their turn. There is no second UI to build,
+//     explain, or keep in step.
+//   - the dominant-action problem cannot recur. A safe option that is a
+//     permanent button gets pressed every turn; one that has to be drawn
+//     cannot be. THE LONG NOON is deliberately the safe card, and the draw is
+//     what rations it.
+//
+// Type `vessel`, not `sign`: `signsHeld` feeds the Marked player's secret aim
+// and `menacePerSign`, and a Vessel holding ten Signs would read as the most
+// corrupt seat at the table by a mile.
+// ---------------------------------------------------------------------------
+
+const VESSEL_CARDS: Card[] = [
+  { id: 'your-name', name: 'It Remembers Your Name',
+    flavour: "It says it the way your mother did.", type: 'vessel', grit: 0,
+    ops: [{ op: 'callSign', target: 'choose' }] },
+  { id: 'up-the-street', name: 'Something Comes Up the Street',
+    flavour: "Nobody sees it arrive. Everybody sees it standing there.",
+    type: 'vessel', grit: 0, ops: [{ op: 'summon' }] },
+  { id: 'not-that-one', name: 'Not That One',
+    flavour: "Your hand is heavier than it was.", type: 'vessel', grit: 0,
+    ops: [{ op: 'shutter' }] },
+  { id: 'freely-given', name: 'A Gift, Freely Given',
+    flavour: "Take it. It was always yours.", type: 'vessel', grit: 0,
+    ops: [{ op: 'gift', target: 'choose' }] },
+  { id: 'long-noon', name: 'The Long Noon',
+    flavour: "The sun has not moved in some time.", type: 'vessel', grit: 0,
+    ops: [{ op: 'whisper', n: 3 }] },
+];
+
 // Act I Trouble. The Bounty line is what makes Act I combat generative —
 // "Nothing in Act II pays a Bounty. Ever." (DESIGN.md §7's economy inversion.)
 const TROUBLE: Card[] = [
-  { id: 'claim-jumpers', name: 'Claim Jumpers', type: 'trouble', grit: 0, clear: 3, menace: 1, ops: [],
+  { id: 'claim-jumpers', name: 'Claim Jumpers',
+    flavour: "Your name on the stake means little at night.", type: 'trouble', grit: 0, clear: 3, menace: 1, ops: [],
     reverse: 'never-miners',
     bounty: [{ op: 'gainCard', filter: { from: 'provisionRow' }, target: 'self' }] },
-  { id: 'rustlers', name: 'Rustlers at the Draw', type: 'trouble', grit: 0, clear: 2, menace: 1, ops: [],
+  { id: 'rustlers', name: 'Rustlers at the Draw',
+    flavour: "They work the draw, where the ground hides them.", type: 'trouble', grit: 0, clear: 2, menace: 1, ops: [],
     reverse: 'herd-back',
     bounty: [{ op: 'gritNextTurn', n: 2, target: 'self' }] },
-  { id: 'barons-men', name: "Cattle Baron's Men", type: 'trouble', grit: 0, clear: 4, menace: 2, ops: [],
+  { id: 'barons-men', name: "Cattle Baron's Men",
+    flavour: "He does not come himself. He never has to.", type: 'trouble', grit: 0, clear: 4, menace: 2, ops: [],
     reverse: 'baron-promise',
     bounty: [
       { op: 'gainCard', filter: { from: 'provisionRow' }, target: 'self' },
       { op: 'gainCard', filter: { from: 'provisionRow' }, target: 'self' },
     ] },
-  { id: 'prairie-fire', name: 'Prairie Fire', type: 'trouble', grit: 0, clear: 3, menace: 2, ops: [],
+  { id: 'prairie-fire', name: 'Prairie Fire',
+    flavour: "The wind decides. It always has.", type: 'trouble', grit: 0, clear: 3, menace: 2, ops: [],
     reverse: 'wrong-colour',
     bounty: [
       { op: 'trash', n: 1, from: 'hand', target: 'self' },
       { op: 'grit', n: 3 },
     ] },
-  { id: 'cardsharp', name: 'The Cardsharp', type: 'trouble', grit: 0, clear: 2, menace: 0, ops: [],
+  { id: 'cardsharp', name: 'The Cardsharp',
+    flavour: "He deals honest. That is the worrying part.", type: 'trouble', grit: 0, clear: 2, menace: 0, ops: [],
     bounty: [{ op: 'draw', n: 2, target: 'self' }] },
-  { id: 'stage-robbery', name: 'Stagecoach Robbery', type: 'trouble', grit: 0, clear: 3, menace: 1, ops: [],
+  { id: 'stage-robbery', name: 'Stagecoach Robbery',
+    flavour: "The mail can wait. The strongbox cannot.", type: 'trouble', grit: 0, clear: 3, menace: 1, ops: [],
     bounty: [{ op: 'gritNextTurn', n: 3, target: 'self' }] },
-  { id: 'hanging-tree', name: 'The Hanging Tree Dispute', type: 'trouble', grit: 0, clear: 2, menace: 1, ops: [],
+  { id: 'hanging-tree', name: 'The Hanging Tree Dispute',
+    flavour: "Two families, one rope, no agreement.", type: 'trouble', grit: 0, clear: 2, menace: 1, ops: [],
     bounty: [{ op: 'trash', n: 1, from: 'hand', target: 'self' }] },
-  { id: 'silver-bit', name: 'Brawl at the Silver Bit', type: 'trouble', grit: 0, clear: 2, menace: 1, ops: [],
+  { id: 'silver-bit', name: 'Brawl at the Silver Bit',
+    flavour: "It started over nothing. They usually do.", type: 'trouble', grit: 0, clear: 2, menace: 1, ops: [],
     bounty: [
       { op: 'draw', n: 1, target: 'self' },
       { op: 'gritNextTurn', n: 1, target: 'all' },
     ] },
-  { id: 'horse-thieves', name: 'Horse Thieves', type: 'trouble', grit: 0, clear: 3, menace: 1, ops: [],
+  { id: 'horse-thieves', name: 'Horse Thieves',
+    flavour: "A man afoot out here is a man finished.", type: 'trouble', grit: 0, clear: 3, menace: 1, ops: [],
     bounty: [{ op: 'gainCard', filter: { from: 'provisionRow' }, target: 'self' }] },
   // Omens have no Clear and no Bounty. They only sit there and cost you.
-  { id: 'dead-cattle', name: 'Dead Cattle, No Wounds', type: 'omen', grit: 0, menace: 0, ops: [] },
-  { id: 'the-well', name: 'The Well Tastes Like Pennies', type: 'omen', grit: 0, menace: 0, ops: [] },
-  { id: 'preacher', name: "The Preacher Won't Come Out", type: 'omen', grit: 0, menace: 0, ops: [] },
+  { id: 'dead-cattle', name: 'Dead Cattle, No Wounds',
+    flavour: "No wounds. No tracks. No birds.", type: 'omen', grit: 0, menace: 0, ops: [] },
+  { id: 'the-well', name: 'The Well Tastes Like Pennies',
+    flavour: "Pennies, and something under the pennies.", type: 'omen', grit: 0, menace: 0, ops: [] },
+  { id: 'preacher', name: "The Preacher Won't Come Out",
+    flavour: "The door is bolted from the inside.", type: 'omen', grit: 0, menace: 0, ops: [] },
 ];
 
 // The four reverse faces. Every Trouble card still in the Street flips to its
 // reverse at the Turning — the threats you left standing become the things that
 // kill you. They are Act II cards, so none of them pays a Bounty.
 const TURNED: Card[] = [
-  { id: 'never-miners', name: 'They Were Never Miners', type: 'mythos',
+  { id: 'never-miners', name: 'They Were Never Miners',
+    flavour: "They came up. They did not go down.", type: 'mythos',
     grit: 0, clear: 5, menace: 2, ops: [], menaceTarget: 'fewestCards' },
-  { id: 'herd-back', name: 'They Brought the Herd Back', type: 'mythos',
+  { id: 'herd-back', name: 'They Brought the Herd Back',
+    flavour: "Every head accounted for. Every one.", type: 'mythos',
     grit: 0, clear: 5, menace: 2, ops: [], noClearWhileOmen: true },
-  { id: 'baron-promise', name: 'The Baron Kept His Promise', type: 'mythos',
+  { id: 'baron-promise', name: 'The Baron Kept His Promise',
+    flavour: "He said he would come back. He did.", type: 'mythos',
     grit: 0, clear: 6, menace: 3, ops: [],
     onCleared: [{ op: 'whisper', n: 2 }] },
-  { id: 'wrong-colour', name: 'It Burns the Wrong Colour', type: 'mythos',
+  { id: 'wrong-colour', name: 'It Burns the Wrong Colour',
+    flavour: "Green, and going through the stone.", type: 'mythos',
     grit: 0, clear: 4, menace: 2, ops: [], menaceTarget: 'all' },
 ];
 
 const MYTHOS: Card[] = [
-  { id: 'thing-in-well', name: 'The Thing in the Well', type: 'mythos', grit: 0, clear: 5, menace: 2, ops: [] },
+  { id: 'thing-in-well', name: 'The Thing in the Well',
+    flavour: "The rope goes down further than it did.", type: 'mythos', grit: 0, clear: 5, menace: 2, ops: [] },
   // The two cards below have no Clear: no amount of damage removes them. They
   // are not permanent any more — they have a PRICE. DESIGN.md §7 gives Act II
   // Threats a Toll where Act I ones have a Bounty, the same third line with the
@@ -332,30 +523,40 @@ const MYTHOS: Card[] = [
   //   Dry Grass prints its Toll: trash a Sign and take a Scar.
   //   Nothing Comes prints "no Menace resolves, discard at end of round" — so
   //     the quiet-round idea in DESIGN.md §7 is dropped; it is an obstruction.
-  { id: 'dry-grass', name: 'Choir of the Dry Grass', type: 'mythos', grit: 0, menace: 0, ops: [],
+  { id: 'dry-grass', name: 'Choir of the Dry Grass',
+    flavour: "The grass sings the parts it remembers.", type: 'mythos', grit: 0, menace: 0, ops: [],
     // Printed on the card. The model for every Toll: it asks for the thing you
     // least want to give, and leaves a mark that never comes off.
     toll: [
       { op: 'trash', n: 1, from: 'hand', target: 'self', kind: 'sign' },
       { op: 'scar', n: 1, target: 'self' },
     ] },
-  { id: 'own-face', name: 'Your Own Face, Waiting', type: 'mythos', grit: 0, clear: 4, menace: 3, ops: [],
+  { id: 'own-face', name: 'Your Own Face, Waiting',
+    flavour: "It waves. You have not raised your hand.", type: 'mythos', grit: 0, clear: 4, menace: 3, ops: [],
     menaceTarget: 'mostSigns' },
-  { id: 'nothing-comes', name: 'Nothing Comes', type: 'mythos', grit: 0, menace: 0, ops: [],
+  { id: 'nothing-comes', name: 'Nothing Comes',
+    flavour: "Nothing comes. Nothing goes. Nothing ends.", type: 'mythos', grit: 0, menace: 0, ops: [],
     // Cheaper than the Choir, and payable by a deck that holds no Signs at all
     // — otherwise a Puritan table can never clear it and the slot really is
     // dead for them.
     toll: [{ op: 'trash', n: 2, from: 'deck', target: 'self' }] },
-  { id: 'wearing-sheriff', name: 'Something Wearing the Sheriff', type: 'mythos', grit: 0, clear: 5, menace: 2, ops: [] },
-  { id: 'seam', name: 'The Sky Has a Seam in It', type: 'mythos', grit: 0, clear: 6, menace: 1, ops: [] },
-  { id: 'town-beneath', name: 'The Town Beneath the Town', type: 'mythos', grit: 0, clear: 4, menace: 2, ops: [] },
-  { id: 'doors-inward', name: 'All the Doors Open Inward', type: 'mythos', grit: 0, clear: 3, menace: 2, ops: [] },
-  { id: 'coyote-debt', name: "Grandmother Coyote's Debt", type: 'mythos', grit: 0, clear: 4, menace: 1, ops: [] },
-  { id: 'long-noon', name: 'The Long Noon', type: 'mythos', grit: 0, clear: 7, menace: 3, ops: [] },
+  { id: 'wearing-sheriff', name: 'Something Wearing the Sheriff',
+    flavour: "It has his walk almost right.", type: 'mythos', grit: 0, clear: 5, menace: 2, ops: [] },
+  { id: 'seam', name: 'The Sky Has a Seam in It',
+    flavour: "Look up. Then try to stop.", type: 'mythos', grit: 0, clear: 6, menace: 1, ops: [] },
+  { id: 'town-beneath', name: 'The Town Beneath the Town',
+    flavour: "The same streets, and older.", type: 'mythos', grit: 0, clear: 4, menace: 2, ops: [] },
+  { id: 'doors-inward', name: 'All the Doors Open Inward',
+    flavour: "Every door. Even the ones outside.", type: 'mythos', grit: 0, clear: 3, menace: 2, ops: [] },
+  { id: 'coyote-debt', name: "Grandmother Coyote's Debt",
+    flavour: "She is here to collect. She always was.", type: 'mythos', grit: 0, clear: 4, menace: 1, ops: [] },
+  { id: 'long-noon', name: 'The Long Noon',
+    flavour: "The sun has not moved since Tuesday.", type: 'mythos', grit: 0, clear: 7, menace: 3, ops: [] },
 ];
 
 export const ALL_CARDS: Card[] = [
   ...STARTERS, ...PROVISIONS, ...SIGNS, ...TROUBLE, ...TURNED, ...MYTHOS,
+  ...VESSEL_CARDS,
 ];
 
 const INDEX: Record<string, Card> = Object.fromEntries(
@@ -369,5 +570,6 @@ export function card(id: string): Card {
 }
 
 export const SIGN_IDS = SIGNS.map((s) => s.id);
+export const VESSEL_IDS = VESSEL_CARDS.map((v) => v.id);
 export const TROUBLE_IDS = TROUBLE.map((t) => t.id);
 export const MYTHOS_IDS = MYTHOS.map((m) => m.id);

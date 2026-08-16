@@ -64,6 +64,7 @@ export function setup(opts: SetupOptions): GameState {
     activePlayer: turnOrder[0],
     actionsLeft: 0,
     whispers: 0,
+    whisperFills: 0,
     doom: 0,
     vesselDamage: 0,
     shuttered: null,

@@ -46,6 +46,8 @@ export interface Net {
   error: string | null;
   /** Whether this server offers the act controls. Off unless asked for. */
   dev: boolean;
+  /** Seats nobody is driving. Public — the table watched them being filled. */
+  bots: PlayerId[];
   send(msg: Inbound): void;
   /** Open a room with this many chairs. Who fills them is decided at the table. */
   create(seats: number): void;
@@ -122,11 +124,11 @@ export function useNet(target: NetTarget): Net {
   const [tableState, setTable] = useState<Net['table']>(null);
   const [error, setError] = useState<string | null>(null);
   const [dev, setDev] = useState(false);
+  const [bots, setBots] = useState<PlayerId[]>([]);
 
   // The socket handler is installed once, so anything it reads must be a ref.
   const seatRef = useRef<PlayerId | null>(null);
   const activeRef = useRef<PlayerId | null>(null);
-  const dealt = useRef(false);
   const beatId = useRef(0);
 
   const send = useCallback((msg: Inbound) => {
@@ -182,22 +184,29 @@ export function useNet(target: NetTarget): Net {
           // The deal has happened; the waiting room is over.
           setTable(null);
           setView(msg.view);
+          setBots(msg.bots ?? []);
           setRev((n) => n + 1);
           setLegal(msg.legal);
           const seatNow = seatRef.current;
           if (msg.events.length) {
             setLog((l) => [
-              ...msg.events.map((e) => describe(e, msg.view, seatNow)).reverse(),
+              ...msg.events
+                .map((e) => describe(e, msg.view, seatNow))
+                // Some events are bookkeeping and describe to nothing rather
+                // than to a line of the record.
+                .filter(Boolean)
+                .reverse(),
               ...l,
             ].slice(0, 60));
           }
-          // The first state is the deal: a burst of setup events nobody needs
-          // narrated, and no turn change to announce because there was no turn
-          // before it.
-          if (dealt.current && msg.events.length) {
+          // The deal now arrives WITH its events, and it should be narrated
+          // and heard like any other — it is the hand people look at hardest.
+          // A later resync carries no events at all, so there is no backlog to
+          // guard against.
+          if (msg.events.length) {
             setFeed((f) => ({ seq: f.seq + 1, events: msg.events }));
           }
-          if (dealt.current) {
+          {
             const fresh = narrate(
               msg.events, msg.view, seatNow, activeRef.current,
               () => (beatId.current += 1),
@@ -211,7 +220,6 @@ export function useNet(target: NetTarget): Net {
             // game is a handful of kilobytes.
             if (fresh.length) setBeats((b) => [...b, ...fresh]);
           }
-          dealt.current = true;
           activeRef.current = msg.view.activePlayer;
           break;
         }
@@ -233,7 +241,7 @@ export function useNet(target: NetTarget): Net {
   }, [target.host, target.room]);
 
   return {
-    connected, roomId, seat, view, legal, log, beats, feed, rev, error, dev, send,
+    connected, roomId, seat, view, legal, log, beats, feed, rev, error, dev, bots, send,
     table: tableState,
     setSeat: (index, kind) => send({ t: 'seat', index, kind }),
     begin: (marked) => send({ t: 'begin', marked }),
@@ -251,7 +259,6 @@ export function useNet(target: NetTarget): Net {
       localStorage.removeItem(TOKEN_KEY);
       seatRef.current = null;
       activeRef.current = null;
-      dealt.current = false;
       setSeat(null);
       setView(null);
       setLegal([]);

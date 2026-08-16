@@ -50,6 +50,39 @@ answer three times (burial, the Vessel-facing Signs, the defensive Signs).
 
 Milestone 3 is not started: **an online client**, with or without bots filling seats.
 
+## The Vessel is the player. The Old One is the fiction.
+
+One entity, two layers, and **only the player layer is allowed in the
+interface.** This was relitigated once because a single seat carried two tags —
+`status: 'oldOne'` beside `state.vessel` — and nobody could say what the
+difference was, because there is none.
+
+- **VESSEL** — a status, a seat, a tag in the player list, a thing you can
+  shoot. The only word in rules text, `legalCommands`, state, or any UI.
+- **THE OLD ONE** — what is *using* the Vessel. Never a player, never a status,
+  never a tag, never in the player list. It is what the Doom track counts and
+  what came through the door at the Turning. You never interact with it, so it
+  does not need a seat.
+
+The posse's win condition says it: they **bury the Vessel**, a body. Closing the
+door is not killing what is behind it.
+
+**Three deliberate exceptions**, and only three:
+
+1. **The Turning** — the moment the Old One arrives. `Turning.tsx`,
+   `turning.css` and the audio are built around that beat. Once, at possession,
+   never again in the interface.
+2. **`winner: 'posse' | 'oldOne'`** and `sim`'s matching `Outcome` — a SIDE, not
+   a seat. A Revenant wins with the Old One's side without ever being the
+   Vessel, and it is never rendered (the client prints "The long noon").
+3. **Glossary lines about the side or the clock** — "Doom is the Old One's
+   clock", "you win only if the Old One wins". The fiction, correctly.
+
+`tests/whispers.test.ts` enforces the rest: `state.vessel` and
+`status === 'vessel'` must always name the same seat, no client payload may
+contain `oldOne`, and no engine file may carry an `'oldOne'` status outside a
+comment or a winner.
+
 ## The three invariants — do not break these
 
 1. **Determinism.** `seed` + ordered command list must reconstruct an identical
@@ -86,11 +119,29 @@ Corollaries that follow from these:
 
 ## The schema bet
 
-A Fevered (corrupted) card is the same effect expressed three ways:
+A Fevered (corrupted) card is the same effect expressed four ways:
 
 - **retarget** — same op, different target (`{ 0: 'leftmostSlot' }`)
-- **appendOps** — an extra cost bolted on (`{ op: 'whisper', n: 1 }`)
+- **appendOps** — a price paid *after* the effect (`{ op: 'whisper', n: 1 }`)
+- **prependOps** — a price paid *before* it
 - **constraints** — a compulsion (`mustPlayOnDraw`)
+
+**`prependOps` is the fourth, and it was added on evidence.** Order is genuinely
+inexpressible with the other three, and paying first is not the same move as
+paying after: the effect resolves against the world the payment made. "The
+Ledger Reads Itself" is the case that forced it. As
+`appendOps: [discardHand]` it drew three cards and then threw the whole hand
+away — a card nobody plays. Prepended, the same two ops are a wheel: dump the
+hand you are stuck with, deal three fresh, and the corruption is that you no
+longer choose what to keep.
+
+**`retarget` indices count the PRINTED ops**, resolved before anything is
+spliced around them, so `{ 0: ... }` still means the card's first op on a card
+that also prepends. Prepended costs also survive `aimed` — the Old One and the
+Revenants lose the Fevered *targeting*, never its price. Both are tested.
+
+If a *fifth* mechanism starts looking necessary, that is the signal below —
+reconsider the abstraction rather than extend it again.
 
 Eleven of twelve Signs fit cleanly. The twelfth (`coyote`) needed a new op atom,
 `revealHand`, because its twist is an information leak rather than an effect
@@ -140,6 +191,108 @@ II Threats to 12 overflow evictions and never got a legal bury in 91% of games.
 Dropping the gate took that to 0%. The other half of the same paper line — damage
 resets to 0 if an Omen enters — survives; set `omensBlockBurial: true` to restore
 the gate for comparison.
+
+## The Colt is depth, Dynamite is breadth
+
+They used to both read "destroy a Threat", which wasted a slot in a set of
+twelve. The split is what fixed that.
+
+- **THE COLT** — destroy one Threat. Fevered (`It Chooses`) is a **pure
+  retarget**: it still never misses, what corruption takes is the choosing. No
+  appended ops, no constraints. If it ever needs more than a retarget,
+  something has gone wrong.
+- **DYNAMITE** — 2 damage to every Threat, or **destroy one Omen and take a
+  Scar**. The only Omen counterplay in the game: the only way to clear the
+  dread is to take on more corruption.
+
+**`banishOmen` is written FIRST on the card** because taking it clears the
+resolution queue — that is what "may instead" means. Both Fevered differences
+are then ordinary mechanisms: `retarget {0: 'all'}` spreads the Scar,
+`appendOps` spreads the blast, and the appended blast is skipped automatically
+on the Omen branch because the queue is already empty. No new Fevered mechanism.
+
+### Ruled: `destroy` stays on the Colt, and the argument against it was right
+
+`destroy` **sits outside the pace engine.** Escalation is what makes the game
+harder — an unresolved Threat gains +1 Clear every Dusk — and an auto-answer is
+immune to it, where damage degrades as intended. The Colt was 4 damage for
+exactly that reason, and it was reverted anyway, because the argument was right
+and the price was still too high. Measured, mixed table:
+
+| | posse win |
+|---|---|
+| before the card work | 26.0% |
+| Colt as 4 damage + new Dynamite | **5.7%** |
+| Colt back to destroy + new Dynamite | **15.7%** |
+
+So the Colt was worth ~10pp and **Dynamite is the other ~10pp** — going from
+"destroy any Threat" to "2 damage to all, or an Omen" is the larger nerf of the
+two, and it is still in. Do not re-open the Colt without that in view.
+
+**Watch for this if damage is ever tried again.** `target: 'choose'` SILENTLY
+acquires the Vessel in Act II — `choiceOptions` adds it for any damage op — so
+the 4-damage Colt was a Sign that both cleared the Street and wounded the
+Vessel, which is the combination that made Zealot win 90–100% of every cell.
+The declared target still read `choose`. There was briefly a `noVessel` opt-out
+flag; it went with the revert, because an escape hatch no card sets is one a
+future author finds at the exact moment they are least likely to question it.
+The rule is now stated in `tests/actii.test.ts` as **no Sign may have choosable
+damage at all**, which needs nothing to be remembered.
+
+### Ruled: `coltFeveredTarget: 'random'`
+
+Measured over 400 real Act II boards, scoring each mode against the shot a
+competent player would have taken:
+
+| mode | value kept | hits best | post-Turning win | sd across blocks |
+|---|---|---|---|---|
+| leftmostSlot | 59.5% | 32.6% | 45.4% | 10.6 |
+| **random** | 67.4% | 50.0% | **41.4%** | 4.7 |
+| lowestClear | 90.5% | 58.4% | 48.5% | 5.5 |
+
+Two results worth not relearning. **`lowestClear` is barely a corruption** — with
+4 damage against ~2.3 Threats, finishing the easiest one is usually what you
+would have done anyway, so it keeps 90% of the best shot and has the highest win
+rate. A Fevered face drifting toward an upgrade is the one thing the design
+cannot allow. And **`random` does not widen the win distribution** the way it was
+expected to (sd 4.7 vs leftmostSlot's 10.6) — leftmostSlot is the volatile one,
+because whether the leftmost slot is the right slot is pure arrival order.
+
+### Ruled: Dynamite costs 4 — and read this before re-sweeping it
+
+Omen counterplay is the number that decided it. Games ending with an Omen still
+in the Street: **97.5% at cost 3, 42.5% at 4, 27.0% at 5.**
+
+**The price sweep measures the BOTS, not the card.** `Balanced` and `Greedy` buy
+through `dearest()` — the most expensive affordable Sign — so purchase share
+tracks price RANK. It is non-monotonic for exactly that reason: bought more at 5
+than at 3, because at 5 it outranks the Colt. The "above 30% is an auto-include"
+test is unmeasurable until a value-aware `pick` exists.
+
+### Ruled: `vesselClear` 14 -> 12, and the posse is still short
+
+Same-policy tables, 120 games a cell:
+
+| `vesselClear` | Puritan | Zealot | Balanced | Greedy |
+|---|---|---|---|---|
+| 10 | 0.0% | 10.8% | 37.5% | 36.7% |
+| **12** | 0.0% | 7.5% | **33.3%** | 25.8% |
+| 14 | 0.0% | 2.5% | 27.5% | 16.7% |
+
+The interior optimum holds at every value — Balanced beats both extremes
+throughout — so this was a pure difficulty dial, not a change in shape.
+
+**Mixed table: 18.3%**, against 26.0% before the card work. The three moves
+went 26.0 -> 5.7 (Colt as damage) -> 15.7 (Colt reverted) -> 18.3
+(`vesselClear` 12). Still ~8pp short, and the remainder is Dynamite: "destroy
+any Threat" -> "2 damage to all, or an Omen" is the single biggest change in
+the pass and it is staying, because Omen counterplay is worth more than the
+win rate it costs. **If the gap needs closing, Dynamite is the lever, not this
+number** — it has now absorbed four consecutive changes and is doing more work
+than any one number should.
+
+Watch the other rows while you do: early deaths sit at **72%**, which predates
+all of this and is tracked under "Still open: falls are early now".
 
 ## Two rules that hold the corruption economy together
 
@@ -318,6 +471,86 @@ now, so the test checks the action was *offered*, not merely defined.
 Balance after the pass: Balanced 44.2%, Greedy 26.0%, Zealot 0.0%, Puritan 0.0%,
 with the interior optimum intact (Bal15 31.5, Bal30 41.2, Bal50 37.0, Bal70 30.0).
 
+## The Whisper track: one number, one direction
+
+`state.whispers` is the only Whisper resource, it only ever goes **up**, and it
+means the same thing in both acts: *when this fills, something bad happens.* It
+just happens more than once.
+
+- **Threshold never changes.** `whisperThreshold`, both acts. The bar has to
+  look identical or the player relearns it halfway through the game.
+- **The rate changes.** Every gain after the Turning is multiplied by
+  `whisperRateMythos`. Same bar, same distance, more pressure.
+- **Act I fills once**, into the Turning. **Act II fills repeatedly**, into
+  Doom: `doomPerFill + (fill - 1) * doomPerFillStep`, counted by
+  `state.whisperFills`. Escalating, so Act II accelerates towards collapse
+  rather than ticking along.
+- **The remainder carries.** 11 of 12 plus a 3-Whisper Sign leaves 2, not 0.
+- **A `while`, not an `if`.** One gain can fill the bar twice and must pay for
+  both.
+
+Everything goes through `addWhispers`. **Nothing subtracts** — there is no
+spend, no clamp, no `Math.min` taking what it can — and `assertWhisperInvariants`
+proves `0 <= whispers < threshold` after every command, in both acts. Being at
+or above the threshold once a command has resolved means a fill was missed, or
+in Act I that the Turning did not fire.
+
+### Two attempts at making this a currency, and why there will not be a third
+
+Both bugs in this area were the same mistake wearing different clothes: the
+track was *also* treated as money.
+
+1. **One field, two jobs.** A progress meter that CALL decremented. It went
+   negative and rendered negative pips.
+2. **Two fields.** `whispers` plus a `whisperPool` the client had never heard
+   of, so `Math.max(undefined, 6)` printed `/NaN`.
+
+The fix is not a better spend path, it is **no spend path**. `tests/whispers.test.ts`
+ends with two structural tests that read the source tree: no file may mention
+`whisperPool`/`callWhisperCost`/`spendPool`/`spendWhispers`, and no file outside
+tests may contain `whispers -=` except the wrap itself. Behavioural tests
+cannot catch an abstraction being half-restored; these can.
+
+### The Old One ADDS Whispers, and it is their weakest move
+
+`WHISPER` names a living player. They gain `oldOneWhispers` **the next time they
+buy anything** — charged through `addWhispers`, so the Act II rate applies and a
+naming that tips the bar resolves its fill immediately.
+
+This is *not* the deleted `WHISPER` (a bare +2 Doom button: unconditional,
+repeatable, touching nobody). The reused name is a trap for a future reader, so
+`tests/actii.test.ts` checks the **shape** rather than the absence: every one of
+the seat's five actions must name somebody or something, and none may move Doom
+on its own.
+
+- Naming alone changes no number.
+- It pays nothing if the target simply does not buy.
+- It stacks — named twice before buying, you owe twice.
+- It is charged on **any** purchase. Exempting Provisions would make it a Sign
+  tax that a wounded player dodges by healing, which is the one purchase they
+  were always going to make.
+
+**If playtesting shows the Old One taking it most turns, that is CALL, SUMMON,
+SHUTTER and OFFER being too weak, not this being too strong.** The bot ranks it
+last for that reason, and aims it at whoever holds most Signs — the threat only
+pays if they spend.
+
+### Measured, 300 games per policy, all-same-policy tables with a Marked bot
+
+| policy | Turned | Act II | fills (med / p90) | Doom (med / p90) | reaches 50 | Doom / bury / wipe |
+|---|---|---|---|---|---|---|
+| Balanced | 284/300 | 3.8 rds | 4 / 7 | 29 / 55 | 28.2% | 26.7 / **51.3** / 22.0 |
+| Greedy | 262/300 | 4.4 rds | 5 / 7 | 44 / 56 | 42.7% | **37.3** / 35.3 / 27.3 |
+| Zealot | 171/300 | 2.0 rds | 1 / 3 | 17 / 28 | 0.0% | 0 / 4.0 / **96.0** |
+| Puritan | 97/300 | 0.1 rds | 0 / 0 | 3 / 6 | 0.0% | 0 / 0 / **100** |
+
+Doom is a live win condition again: it takes 27% of Balanced games and 37% of
+Greedy ones, against 12–15% before, and the bury/Doom split is close to even
+for the two policies that survive long enough to have the argument. The bottom
+two rows still die to attrition before Doom is relevant — **that is not a Doom
+problem**, it is Zealot and Puritan losing Act II in two rounds, and adding
+Doom pressure would only shorten games they are already losing.
+
 ## Act I Bounties and the economy inversion
 
 All nine Act I Trouble cards pay a Bounty to whoever clears them, from the card
@@ -457,6 +690,36 @@ design flaw the simulator had never caught:
    highlights whoever is acting. Bots used to resolve inside `submit`, so three
    opponents moved in a single flash.
 
+## Piles open as cards, and the leak that found
+
+Deck, discard and boneyard open a `PileSheet` — a full overlay of card faces,
+**alphabetical by the name actually printed on the face** (a Fevered Sign sorts
+under its Fevered name, or the grid looks unsorted to the only person reading
+it). Every copy is drawn rather than collapsed to `×N`: deck-as-health means
+eight Saddlebags is a fact about your position, and eight faces says it the way
+the pile would if you spread it on the table.
+
+Alphabetical is a **rule, not a preference** — the deck is in there and its order
+is secret, so sorting by anything the game decides would leak the shuffle
+through the back door.
+
+**Which is exactly what was happening.** `playerView`'s `sortedForReview` sorted
+on `cardId` then `fevered` and stopped. `Array.prototype.sort` is stable, so
+every run of identical cards kept its *input* order — and a deck is mostly
+duplicates. The array looked perfectly sorted; the shuffle was intact inside it.
+Two things let it live:
+
+- the only test naming deck order checked that **opponents'** decks were absent,
+  which is the easy half — your own deck is sent in full, because a deck builder
+  you cannot review is unplayable, so the order is the part that has to be
+  scrubbed;
+- nothing rendered it. It took drawing the pile as faces to make it visible.
+
+Fixed with a `uid` tiebreak (a creation counter, so it cannot carry a shuffle),
+and `tests/engine.test.ts` now proves it by permutation — rotations and a
+reversal must all project byte-identically. **Only a permutation test can see
+this class of bug**; reading the output never will.
+
 ## The table narrates itself
 
 `client/src/beats.ts` turns each batch of events into one spoken sentence, shown
@@ -590,6 +853,18 @@ Audio lives in `client/src/`: `coinPool.ts` (coins, and the Sign purchase),
 `Dusk.tsx` and `Turning.tsx`. `settings.ts` holds the mute and two levels, and
 exposes `musicLevel` / `effectsLevel` with the mute **already folded in**, so no
 caller can forget to check it.
+
+**`DISCARDED` is an engine event that is deliberately silent in the chronicle.**
+It carries `{ player, n, hand }` and exists so the client has one source of
+truth for "a card went to a discard pile" instead of inferring it from `GRIT`
+here and a turn change there. `hand` distinguishes the two gestures — sweeping a
+whole hand away (`discard-a`) from putting one card down mid-turn
+(`discard-one-a`) — and **is not derivable from the count**: a turn that played
+four of five cards ends by sweeping exactly one. `describe()` returns `''` for
+it and `narrate.test.ts` lists it in `silent`, because whatever caused the
+discard is already narrated by the thing that caused it. Emitted at four sites:
+the end-of-turn sweep, `SPEND_GRIT`, `REVENANT_WHISPER`, and the `discardHand`
+op. **Not** on `PLAY_CARD` — playing a card is not discarding it.
 
 Three things learned the hard way, all in comments at the site:
 

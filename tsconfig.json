@@ -30,6 +30,7 @@
   ],
   "exclude": [
     "tests/ambience.test.ts",
+    "tests/cardsounds.test.ts",
     "tests/worker",
     "worker"
   ]

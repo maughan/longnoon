@@ -22,7 +22,7 @@ export interface LobbyConfig {
   /** How many times "keep waiting" may win before the seat is botified anyway. */
   maxExtensions: number;
   /**
-   * Grace for the Vessel in Act II. If the Old One drops, the posse cannot
+   * Grace for the Vessel in Act II. If the Vessel drops, the posse cannot
    * proceed at all, so that seat gets a shorter fuse and no vote.
    */
   vesselGraceMs: number;
@@ -92,7 +92,7 @@ export class Lobby {
     if (!seat || seat.kind !== 'human' || !seat.connected) return [];
     this.room.setConnected(seatId, false);
 
-    // The Old One dropping stops the game dead — short fuse, and no vote.
+    // The Vessel dropping stops the game dead — short fuse, and no vote.
     const isVessel = this.room.view('spectator').vessel === seatId;
     const grace = isVessel ? this.cfg.vesselGraceMs : this.cfg.graceMs;
 

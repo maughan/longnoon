@@ -13,7 +13,7 @@ import { randAt } from '../engine/rng';
 // other than ending the turn? Under about 90% and the deletion went too far —
 // Tolls or Vessel targeting would need to be more available.
 test('Act II agency', () => {
-  const tally = { posse: 0, posseLive: 0, oldOne: 0, oldOneLive: 0, revenant: 0, revenantLive: 0 };
+  const tally = { posse: 0, posseLive: 0, vessel: 0, vesselLive: 0, revenant: 0, revenantLive: 0 };
   const kinds = new Map<string, number>();
   let games = 0;
 
@@ -32,7 +32,7 @@ test('Act II agency', () => {
 
       if (s.act === 'mythos' && !s.pending && status !== 'gone') {
         const real = legal.filter((c) => c.t !== 'END_TURN');
-        const bucket = status === 'oldOne' ? 'oldOne'
+        const bucket = status === 'vessel' ? 'vessel'
           : status === 'revenant' ? 'revenant' : 'posse';
         tally[bucket] += 1;
         if (real.length) tally[`${bucket}Live` as keyof typeof tally] += 1;
@@ -51,21 +51,22 @@ test('Act II agency', () => {
   const pct = (a: number, b: number) => (b ? ((a / b) * 100).toFixed(1) : '—');
   console.log(`over ${games} games:`);
   console.log(`  posse Act II turns:    ${tally.posse}  with a real action: ${pct(tally.posseLive, tally.posse)}%`);
-  console.log(`  Old One Act II turns:  ${tally.oldOne}  with a real action: ${pct(tally.oldOneLive, tally.oldOne)}%`);
+  console.log(`  Vessel Act II turns:   ${tally.vessel}  with a real action: ${pct(tally.vesselLive, tally.vessel)}%`);
   console.log(`  Revenant Act II turns: ${tally.revenant}  with a real action: ${pct(tally.revenantLive, tally.revenant)}%`);
-  const all = tally.posse + tally.oldOne + tally.revenant;
-  const live = tally.posseLive + tally.oldOneLive + tally.revenantLive;
+  const all = tally.posse + tally.vessel + tally.revenant;
+  const live = tally.posseLive + tally.vesselLive + tally.revenantLive;
   console.log(`  ALL Act II turns:      ${all}  with a real action: ${pct(live, all)}%`);
   console.log('  actions offered:', [...kinds].sort((a, b) => b[1] - a[1])
     .map(([k, n]) => `${k}=${n}`).join(' '));
 
   expect(all).toBeGreaterThan(500);
   expect(live / all, 'Act II turns with something to do').toBeGreaterThan(0.9);
-  // Each seat separately, or a healthy posse could hide a dead Old One.
+  // Each seat separately, or a healthy posse could hide a dead Vessel.
   expect(tally.posseLive / tally.posse).toBeGreaterThan(0.9);
-  expect(tally.oldOneLive / tally.oldOne).toBeGreaterThan(0.9);
-  // The replacements are actually reachable, not merely defined.
-  for (const t of ['PAY_TOLL', 'SHUTTER', 'OFFER', 'CALL']) {
-    expect(kinds.get(t) ?? 0, t).toBeGreaterThan(0);
-  }
+  expect(tally.vesselLive / tally.vessel).toBeGreaterThan(0.9);
+  // The replacements are actually reachable, not merely defined. SHUTTER,
+  // OFFER and CALL are cards now rather than commands, so what has to be
+  // reachable is PLAY_CARD from the Vessel's seat — checked above by
+  // `vesselLive` — and the one command that survived.
+  expect(kinds.get('PAY_TOLL') ?? 0, 'PAY_TOLL').toBeGreaterThan(0);
 });

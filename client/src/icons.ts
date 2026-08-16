@@ -29,7 +29,7 @@ export function iconForCard(def: Card, fevered = false): IconName {
 export function iconForStatus(status: Status): IconName | null {
   switch (status) {
     case 'revenant': return 'revenant';
-    case 'oldOne': return 'vessel';
+    case 'vessel': return 'vessel';
     case 'gone': return 'grave';
     default: return null;
   }
@@ -48,6 +48,7 @@ export const TERM_ICONS: Record<string, IconName> = {
   clear: 'clear',
   menace: 'menace',
   bounty: 'grit',
+  toll: 'scar',
   damage: 'scar',
   deck: 'kit',
   omen: 'omen',

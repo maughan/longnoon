@@ -3,16 +3,19 @@
 //   "THE POSSE WINS by burying the Vessel: deal 12 total damage to the Vessel
 //    across any number of turns, while no Omen sits in the Street. Damage to
 //    the Vessel resets to 0 if an Omen enters."
-//   Old One: "you keep your own deck, all Fevered, and now you aim them again."
+//   The Vessel: "you keep your own deck, all Fevered, and now you aim them again."
 //   Revenant: "play a Fevered card (you choose all targets)."
 
 import { describe, it, expect } from 'vitest';
 import { setup, start, apply, legalCommands } from '../engine';
-import { newInstance, opsFor, VESSEL_KEY, deckSize, damagePlayer } from '../engine/effects';
+import {
+  newInstance, opsFor, VESSEL_KEY, deckSize, damagePlayer, drawCards,
+} from '../engine/effects';
 import { card, SIGN_IDS, TROUBLE_IDS } from '../content/cards';
-import type { GameState, PlayerId, Op } from '../engine/state';
+import type { GameState, PlayerId, Op, Card } from '../engine/state';
 
-const base = () => setup({ seed: 'noon', players: ['Ada', 'Bo', 'Cy'], markedIndex: 1 });
+const base = (tuning: Partial<GameState['tuning']> = {}) =>
+  setup({ seed: 'noon', players: ['Ada', 'Bo', 'Cy'], markedIndex: 1, tuning });
 
 /** Trip the Whisper track, then hand the turn to a named posse player. */
 function actII(): { s: GameState; posse: PlayerId; vessel: PlayerId } {
@@ -122,7 +125,10 @@ describe('Omens and the Vessel', () => {
     s.activePlayer = vessel;
     s.actionsLeft = 3;
     s.supply.mythos.unshift(newInstance(s, 'dead-cattle'));
-    const r = apply(s, vessel, { t: 'SUMMON', slot: 0 });
+    // Through the card, because SUMMON the command is gone.
+    const summon = newInstance(s, 'up-the-street');
+    s.players[vessel].hand.push(summon);
+    const r = apply(s, vessel, { t: 'PLAY_CARD', uid: summon.uid });
     expect(r.state.vesselDamage).toBe(0);
     expect(r.events.some((e) => e.t === 'VESSEL_DAMAGE_RESET')).toBe(true);
   });
@@ -133,7 +139,9 @@ describe('Omens and the Vessel', () => {
     s.activePlayer = vessel;
     s.actionsLeft = 3;
     s.supply.mythos.unshift(newInstance(s, 'thing-in-well'));
-    const r = apply(s, vessel, { t: 'SUMMON', slot: 0 });
+    const summon = newInstance(s, 'up-the-street');
+    s.players[vessel].hand.push(summon);
+    const r = apply(s, vessel, { t: 'PLAY_CARD', uid: summon.uid });
     expect(r.state.vesselDamage).toBe(5);
   });
 
@@ -152,7 +160,23 @@ describe('Fevered Signs turn on the Vessel', () => {
   const VESSEL_FACING = ['salt-line', 'night-watch', 'coyote'];
   /** Signs that clear the Street instead — deliberately no Vessel damage. */
   const STREET_FACING = ['colt', 'dynamite'];
-  const hitsVessel = (o: Op) => 'target' in o && o.target === 'vessel';
+  /**
+   * Can this op put damage on the Vessel — declared OR offered?
+   *
+   * `target: 'vessel'` is the obvious half. The other half is `'choose'`, which
+   * `choiceOptions` SILENTLY adds the Vessel to in Act II — so a Street-clearing
+   * Sign written as choosable damage breaks rule 1 while reading as though it
+   * does not. That is exactly what happened when the Colt was briefly 4 damage
+   * instead of a destroy, and the declared target still said `choose`.
+   *
+   * Stated as "no Sign may have choosable damage at all" rather than with an
+   * opt-out flag on the op. A flag needs a card to set it, and the moment the
+   * Colt went back to `destroy` nothing did — an unused escape hatch that only
+   * a future author would find, at the moment they were about to need it and
+   * least likely to question it.
+   */
+  const hitsVessel = (o: Op) =>
+    o.op === 'damage' && (o.target === 'vessel' || o.target === 'choose');
 
   /** Derived from card data — these magnitudes are tuning, not behaviour. */
   const vesselDamageOf = (id: string) =>
@@ -180,9 +204,17 @@ describe('Fevered Signs turn on the Vessel', () => {
       const wounds = ops.some(hitsVessel);
       expect(clears && wounds, `${id} does both jobs at once`).toBe(false);
     }
-    // ...and the Street-facing Signs really do still clear.
+    // ...and the Street-facing Signs really do still answer the Street.
+    // `destroy` is no longer how either of them does it: the Colt deals damage
+    // so that escalation can degrade it, and Dynamite's only removal is an
+    // Omen, which nothing else in the game can touch.
     for (const id of STREET_FACING) {
-      expect(opsFor(card(id), true).some((o) => o.op === 'destroy'), id).toBe(true);
+      const ops = opsFor(card(id), true);
+      const answers = ops.some(
+        (o) => o.op === 'destroy' || o.op === 'banishOmen'
+          || (o.op === 'damage' && !hitsVessel(o)),
+      );
+      expect(answers, `${id} no longer answers the Street`).toBe(true);
     }
   });
 
@@ -227,7 +259,7 @@ describe('Fevered Signs turn on the Vessel', () => {
     expect(r.state.vesselDamage).toBe(0);
   });
 
-  it('the Old One does not wound itself with its own Fevered Signs', () => {
+  it('the Vessel does not wound itself with its own Fevered Signs', () => {
     const { s, vessel } = actII();
     s.activePlayer = vessel;
     s.actionsLeft = 3;
@@ -256,14 +288,16 @@ describe('Fevered Signs turn on the Vessel', () => {
     expect(r.state.vesselDamage).toBe(0);
   });
 
-  it('the Colt still destroys the leftmost Threat as well', () => {
+  it('the Fevered Colt lands without asking, and never on the Vessel', () => {
     const { s, posse } = actII();
     s.street[1] = threat(s, 'thing-in-well');
     const inst = newInstance(s, 'colt', true);
     s.players[posse].hand.push(inst);
     const r = apply(s, posse, { t: 'PLAY_CARD', uid: inst.uid });
-    expect(r.state.street[1]).toBeNull();
-    expect(r.state.vesselDamage).toBe(vesselDamageOf('colt'));
+    expect(r.state.pending, 'the Fevered face asked').toBeNull();
+    expect(r.state.street[1], 'the Threat survived').toBeNull();
+    // Rule 1: a Sign that answers the Street gets nothing off the Vessel.
+    expect(r.state.vesselDamage).toBe(0);
   });
 });
 
@@ -322,7 +356,7 @@ describe('Omens make attrition unavoidable', () => {
 
 describe("the Marked player's secret aim", () => {
   // "SECRET AIM: at the Turning, two other players must each hold 3 or more
-  //  Signs. If they do, you begin the Old One's turn with +3 Doom."
+  //  Signs. If they do, you begin the Vessel's turn with +3 Doom."
   const atTurning = (signsPerSeat: number[], markedIndex = 1) => {
     const s = start(setup({
       seed: 'aim', players: ['Ada', 'Bo', 'Cy'], markedIndex,
@@ -388,7 +422,7 @@ describe('the Long Season has an ending', () => {
 describe('the fallen aim their Fevered cards', () => {
   it('opsFor drops the retarget when aimed, but keeps the appended cost', () => {
     const colt = card('colt');
-    expect(opsFor(colt, true)[0]).toMatchObject({ target: 'leftmostSlot' });
+    expect(opsFor(colt, true)[0]).toMatchObject({ target: 'itChooses' });
     expect(opsFor(colt, true, true)[0]).toMatchObject({ target: 'choose' });
 
     const salt = card('salt-line');
@@ -401,7 +435,7 @@ describe('the fallen aim their Fevered cards', () => {
     expect(opsFor(colt, false, true)).toEqual(colt.ops);
   });
 
-  it('the Old One chooses targets instead of hitting the leftmost slot', () => {
+  it('the Vessel chooses targets instead of hitting the leftmost slot', () => {
     const { s, vessel } = actII();
     s.activePlayer = vessel;
     s.actionsLeft = 3;
@@ -425,8 +459,13 @@ describe('the fallen aim their Fevered cards', () => {
     s.players[posse].hand.push(inst);
 
     const r = apply(s, posse, { t: 'PLAY_CARD', uid: inst.uid });
-    expect(r.state.pending).toBeNull();
-    expect(r.state.street[0]).toBeNull(); // leftmost, not chosen
+    expect(r.state.pending, 'the player was asked').toBeNull();
+    // Exactly one Threat took it, and the player did not pick which. Asserted
+    // on the event rather than on a slot index so it holds for all three
+    // `coltFeveredTarget` modes — the point is that it lands somewhere without
+    // being aimed, not where it lands.
+    const hits = r.events.filter((e) => e.t === 'THREAT_CLEARED');
+    expect(hits).toHaveLength(1);
   });
 
   it('a card resolved by CALL is not aimed', () => {
@@ -436,12 +475,15 @@ describe('the fallen aim their Fevered cards', () => {
     s.street[0] = threat(s, 'thing-in-well');
     s.street[1] = threat(s, 'own-face');
     s.players[posse].deck.unshift(newInstance(s, 'colt', true));
-    // CALL is paid for out of the Whisper pool now.
-    s.whispers = s.tuning.callWhisperCost;
 
-    const r = apply(s, vessel, { t: 'CALL', target: posse });
-    expect(r.state.pending).toBeNull();
-    expect(r.state.street[0]).toBeNull();
+
+    const read = newInstance(s, 'your-name');
+    s.players[vessel].hand.push(read);
+    const played = apply(s, vessel, { t: 'PLAY_CARD', uid: read.uid });
+    const done = apply(played.state, vessel, {
+      t: 'RESOLVE_CHOICE', choiceId: played.state.pending!.id, picks: [posse],
+    });
+    expect(done.events.filter((e) => e.t === 'THREAT_CLEARED')).toHaveLength(1);
   });
 });
 
@@ -511,7 +553,7 @@ describe('the Revenant burns out', () => {
     expect(r.events.some((e) => e.t === 'BURNED_OUT')).toBe(true);
   });
 
-  it('the Old One floors at one card so the endgame cannot stall', () => {
+  it('the Vessel floors at one card so the endgame cannot stall', () => {
     const { s } = actII();
     const vessel = s.vessel!;
     const p = s.players[vessel];
@@ -519,7 +561,7 @@ describe('the Revenant burns out', () => {
     p.hand = [];
     p.discard = [newInstance(s, 'colt', true)];
     s.activePlayer = vessel;
-    expect(roundTrip(s).state.players[vessel].status).toBe('oldOne');
+    expect(roundTrip(s).state.players[vessel].status).toBe('vessel');
   });
 
   it('Whisper discards a card for +1 Whisper', () => {
@@ -858,7 +900,7 @@ describe('the posse can actually win', () => {
    * With any Threat in the Street a `damage` op offers the slots AND the
    * Vessel, so the player is asked to aim — and `apply`'s pending-choice branch
    * returned before the win check. The game then only ended at Dusk, where Doom
-   * is tested first, so the Old One could take a game the posse had already won.
+   * is tested first, so the Old One's side could take a game the posse had already won.
    */
   it('wins the instant the Vessel is buried, even through a prompt', () => {
     const { s, posse } = actII();
@@ -921,13 +963,34 @@ describe('the dominant actions are gone', () => {
     }
   });
 
-  it('never offers the Old One a free +2 Doom', () => {
+  it('gives the Vessel exactly the command set every other player has', () => {
+    /*
+      The dominant-action problem, closed structurally rather than by tuning.
+
+      CALL, SUMMON, SHUTTER, OFFER and WHISPER were five buttons on a bespoke
+      menu, and the safe one got pressed every turn because a permanent button
+      always can be. They are cards now, so the seat reaches them through
+      PLAY_CARD and cannot spam the safe one — it has to be drawn.
+
+      Asserted as SAMENESS rather than as a list of what is gone: a future
+      Vessel-only command would pass a "these five do not exist" test and still
+      rebuild the second interface this removed.
+    */
     const { s, vessel } = actII();
     s.activePlayer = vessel;
-    const legal = legalCommands(s, vessel);
-    expect(legal.every((c) => c.t !== ('WHISPER' as never))).toBe(true);
-    // And the seat is not left empty-handed by the deletion.
-    expect(legal.filter((c) => c.t !== 'END_TURN').length).toBeGreaterThan(0);
+    s.actionsLeft = 3;
+    // The helper sets `activePlayer` directly, so `startTurn` never ran and no
+    // hand was dealt. In play the Vessel draws like everyone else; here that
+    // has to be done by hand or the seat looks empty for the wrong reason.
+    drawCards(s, vessel, s.tuning.handSize, []);
+    const EVERYONE = new Set([
+      'PLAY_CARD', 'SPEND_GRIT', 'BUY', 'PAY_TOLL', 'RESOLVE_CHOICE', 'END_TURN',
+    ]);
+    const kinds = new Set(legalCommands(s, vessel).map((c) => c.t));
+    expect([...kinds].filter((k) => !EVERYONE.has(k)), 'a Vessel-only command')
+      .toEqual([]);
+    // And the seat is not a spectator: it has its own deck to play from.
+    expect(kinds.has('PLAY_CARD')).toBe(true);
   });
 
   it('leaves a player with a blocked Street something to do', () => {
@@ -1014,121 +1077,49 @@ describe('Tolls', () => {
   });
 });
 
-describe('the Old One rebuilt', () => {
-  const asOldOne = () => {
-    const { s, vessel, posse } = actII();
-    s.activePlayer = vessel;
-    s.actionsLeft = 3;
-    return { s, vessel, posse };
-  };
 
-  it('SHUTTER takes the named type off every player, and expires', () => {
-    const { s, vessel, posse } = asOldOne();
-    for (const pid of s.turnOrder) {
-      s.players[pid].hand = [newInstance(s, 'winchester'), newInstance(s, 'colt', true)];
-    }
-    const kitPlayable = (st: GameState, pid: string) =>
-      legalCommands(st, pid).some(
-        (c) => c.t === 'PLAY_CARD'
-          && card(st.players[pid].hand.find((h) => h.uid === c.uid)!.cardId).type === 'kit',
-      );
 
-    const shut = apply(s, vessel, { t: 'SHUTTER', cardType: 'kit' }).state;
-    for (const pid of shut.turnOrder) {
-      if (shut.players[pid].status === 'oldOne') continue;
-      shut.activePlayer = pid;
-      shut.actionsLeft = 3;
-      expect(kitPlayable(shut, pid), pid).toBe(false);
-      // A Sign is untouched, and cashing the Kit in for Grit still works.
-      expect(legalCommands(shut, pid).some((c) => c.t === 'SPEND_GRIT')).toBe(true);
-    }
-
-    // It runs out on schedule.
-    const later = { ...shut, round: shut.round + shut.tuning.shutterDuration + 1 };
-    later.activePlayer = posse;
-    later.actionsLeft = 3;
-    expect(kitPlayable(later, posse)).toBe(true);
+describe('prependOps does not disturb the rest of the schema', () => {
+  const template = (fevered: Card['fevered']): Card => ({
+    id: 'x', name: 'x', type: 'sign', grit: 0,
+    ops: [
+      { op: 'damage', n: 1, target: 'choose' },
+      { op: 'draw', n: 1, target: 'self' },
+    ],
+    fevered,
   });
 
-  it('CALL is unavailable at no Whispers, and spends them when it is', () => {
-    const { s, vessel, posse } = asOldOne();
-    s.whispers = 0;
-    expect(legalCommands(s, vessel).some((c) => c.t === 'CALL')).toBe(false);
-    expect(() => apply(s, vessel, { t: 'CALL', target: posse })).toThrow();
-
-    s.whispers = s.tuning.callWhisperCost + 1;
-    expect(legalCommands(s, vessel).some((c) => c.t === 'CALL')).toBe(true);
-    const r = apply(s, vessel, { t: 'CALL', target: posse });
-    expect(r.state.whispers).toBe(1);
+  it('retarget indices still count the PRINTED ops, not the final array', () => {
+    // The trap: `retarget: { 0: ... }` reads as "the first op", and prepending
+    // makes those two different things. Resolved before the splice, so they
+    // stay the same thing.
+    const ops = opsFor(template({
+      name: 'x',
+      prependOps: [{ op: 'discardHand', target: 'self' }],
+      retarget: { 0: 'leftmostSlot' },
+    }), true);
+    expect(ops.map((o) => o.op)).toEqual(['discardHand', 'damage', 'draw']);
+    // The damage moved, and the prepended discard was not retargeted by proxy.
+    expect((ops[1] as { target: string }).target).toBe('leftmostSlot');
+    expect((ops[0] as { target: string }).target).toBe('self');
   });
 
-  it('OFFER puts the Sign in the target discard, Fevered', () => {
-    const { s, vessel, posse } = asOldOne();
-    const before = s.players[posse].discard.length;
-    const r = apply(s, vessel, { t: 'OFFER', target: posse, cardId: 'colt' });
-    const disc = r.state.players[posse].discard;
-    expect(disc).toHaveLength(before + 1);
-    const gift = disc[disc.length - 1];
-    expect(gift.cardId).toBe('colt');
-    expect(gift.fevered).toBe(true);
-    expect(gift.offeredUntil).toBe(s.round + 1);
+  it('an aimed card keeps the prepended cost and loses the retarget', () => {
+    // The Vessel and the Revenants aim their Fevered cards. They lose the
+    // corruption's TARGETING, never its price.
+    const ops = opsFor(template({
+      name: 'x',
+      prependOps: [{ op: 'discardHand', target: 'self' }],
+      retarget: { 0: 'leftmostSlot' },
+    }), true, true);
+    expect(ops.map((o) => o.op)).toEqual(['discardHand', 'damage', 'draw']);
+    expect((ops[1] as { target: string }).target).toBe('choose');
   });
 
-  it('a gift played in time pays the Old One, and later does not', () => {
-    const { s, vessel, posse } = asOldOne();
-    const given = apply(s, vessel, { t: 'OFFER', target: posse, cardId: 'certainty' }).state;
-    const gift = given.players[posse].discard.at(-1)!;
-
-    const soon = structuredClone(given);
-    soon.players[posse].hand.push(gift);
-    soon.activePlayer = posse;
-    soon.actionsLeft = 3;
-    const paid = apply(soon, posse, { t: 'PLAY_CARD', uid: gift.uid });
-    expect(paid.events.some((e) => e.t === 'OFFER_TAKEN')).toBe(true);
-
-    const late = structuredClone(soon);
-    late.round = gift.offeredUntil! + 1;
-    const free = apply(late, posse, { t: 'PLAY_CARD', uid: gift.uid });
-    expect(free.events.some((e) => e.t === 'OFFER_TAKEN')).toBe(false);
-  });
-});
-
-describe('Whispers are the Old One’s ammunition', () => {
-  it('the Turning empties the track it just spent', () => {
-    const s0 = start(base()).state;
-    s0.whispers = s0.tuning.whisperThreshold + 5;
-    const s = apply(s0, s0.activePlayer, { t: 'END_TURN' }).state;
-    expect(s.act).toBe('mythos');
-    expect(s.whispers).toBe(0);
-  });
-
-  it('buying a Sign in Act II arms the thing across the table', () => {
-    const { s, posse } = actII();
-    s.players[posse].gritThisTurn = 10;
-    const before = s.whispers;
-    const r = apply(s, posse, { t: 'BUY', cardId: 'colt' });
-    expect(r.state.whispers).toBe(before + card('colt').whispers!);
-  });
-
-  it('buying a Sign in Act I still costs nothing until it is played', () => {
-    // The rule that stops Sign-hoarding being the dominant Act I line.
-    const s = start(base()).state;
-    s.players[s.activePlayer].gritThisTurn = 10;
-    const r = apply(s, s.activePlayer, { t: 'BUY', cardId: 'colt' });
-    expect(r.state.whispers).toBe(s.whispers);
-  });
-
-  it('the fallen keep the pool filled when the posse stops buying', () => {
-    // Without this the Old One goes dry the moment the posse refuses to buy,
-    // and the seat is back to having nothing to do.
-    const { s, posse } = actII();
-    s.players[posse].status = 'revenant';
-    s.players[posse].hand = [newInstance(s, 'saddlebag')];
-    s.activePlayer = posse;
-    s.actionsLeft = 2;
-    s.whispers = 0;
-    const uid = s.players[posse].hand[0].uid;
-    const r = apply(s, posse, { t: 'REVENANT_WHISPER', uid });
-    expect(r.state.whispers).toBe(1);
+  it('leaves the clean face completely alone', () => {
+    const c = template({
+      name: 'x', prependOps: [{ op: 'discardHand', target: 'self' }],
+    });
+    expect(opsFor(c, false).map((o) => o.op)).toEqual(['damage', 'draw']);
   });
 });

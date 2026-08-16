@@ -16,7 +16,7 @@
 import type { Command, CardInstance, Target } from '../engine/state';
 import type { ClientState } from '../engine/view';
 import {
-  opsFor, VESSEL_KEY, effectiveClear, effectiveMenace,
+  opsFor, VESSEL_KEY, DECLINE_KEY, effectiveClear, effectiveMenace,
 } from '../engine/effects';
 import { card, SIGN_IDS } from '../content/cards';
 
@@ -250,7 +250,7 @@ export const BALANCED = balanced();
  * The Marked player. "You do not sabotage. You encourage."
  *
  * Their secret aim is that at the Turning two OTHER players each hold 3+ Signs,
- * which is worth +3 starting Doom to the Old One. They cannot make anyone buy,
+ * which is worth +3 starting Doom against the posse. They cannot make anyone buy,
  * so their only mechanical lever is *timing*: playing a Sign advances the shared
  * Whisper track and brings the Turning on, so a Marked player holds their Signs
  * back until the table has corrupted itself, then stops holding back.
@@ -291,6 +291,32 @@ function resolvePending(view: ClientState, legal: Command[]): Command {
   const opts = view.pending?.options ?? [];
   const pickKey = (key: string) =>
     legal.find((c) => c.t === 'RESOLVE_CHOICE' && c.picks[0] === key);
+
+  /*
+    Dynamite's modal: bring down an Omen, or blast the Street.
+
+    Handled FIRST and explicitly, because the generic slot ranking below
+    filters Omens out of `threats()` — so without this the bot fell through to
+    `legal[0]` and banished every single time, which would have measured the
+    Scar pump at its ceiling rather than at anything a player would do.
+
+    The trade is breadth against permanence. Two damage across N Threats is
+    worth roughly 2N now; an Omen is worth a slot for ever, plus its Menace
+    and its Whisper drip every Dusk. So: banish when the blast has little to
+    hit, or when the Street is jammed and the dead slot is the actual problem.
+    Otherwise take the value.
+
+    Shared by every posse policy, like all threat handling — Puritan and Zealot
+    differ only in what they BUY and whether they play Signs.
+  */
+  if (view.pending?.op === 'banishOmen') {
+    const blastable = threats(view).length;
+    const free = view.street.filter((sl) => sl === null).length;
+    const omen = opts.find((o) => /^\d+$/.test(o.key));
+    const worthIt = blastable <= 1 || free === 0;
+    const cmd = worthIt && omen ? pickKey(omen.key) : pickKey(DECLINE_KEY);
+    if (cmd) return cmd;
+  }
 
   // `destroy` carries no magnitude, and clears any Threat outright.
   const amount = view.pending?.amount ?? Infinity;
@@ -339,12 +365,7 @@ function resolvePending(view: ClientState, legal: Command[]): Command {
 }
 
 /**
- * The Old One. Held FIXED across every experiment so it can never confound a
- * comparison between posse policies. Whisper is 2 Doom per action, which
- * dominates Summon (1 Doom per round) and Call (0 Doom).
- */
-/**
- * The fallen. "A Revenant wins if and only if the Old One wins", so their whole
+ * The fallen. "A Revenant wins if and only if the Vessel wins", so their whole
  * job is to push the table toward the Turning and toward corruption — the
  * opposite of what their cards do if played carelessly, since most Fevered faces
  * clear Threats and that helps the posse.
@@ -370,7 +391,7 @@ function fallenMove(view: ClientState, legal: Command[]): Command {
     if (whisper) return whisper;
   }
 
-  // Anything that eats every deck hurts the posse more than the Old One.
+  // Anything that eats every deck hurts the posse more than the Vessel.
   const spite = view.you?.hand.find((ci) =>
     opsFor(card(ci.cardId), ci.fevered).some(
       (op) => op.op === 'trash' && op.target === 'all',
@@ -384,53 +405,17 @@ function fallenMove(view: ClientState, legal: Command[]): Command {
 }
 
 /**
- * The Old One, without a default button.
+ * The Vessel plays cards now, so there is no Vessel policy left.
  *
- * WHISPER used to be the whole policy — unconditional, free, and always worth
- * taking, so nothing else was ever measured. Every move here has a condition,
- * which is the point of the rebuild: the seat has to read the table.
+ * CALL, SUMMON, SHUTTER, OFFER and WHISPER were five bespoke commands and this
+ * was the heuristic that ranked them. Their effects are ops on cards in the
+ * Vessel's deck, so the seat reaches them through PLAY_CARD like everybody
+ * else — which means the shared play/spend/buy logic below already covers it,
+ * and a separate policy would be a second opinion about the same decisions.
+ *
+ * What used to be "which button is best" is now "which card is in hand", and
+ * that is the point of the change rather than a side effect of it.
  */
-function oldOneMove(view: ClientState, legal: Command[]): Command {
-  const bySigns = new Map(view.opponents.map((o) => [o.id, o.signsHeld]));
-  const richest = [...view.opponents]
-    .filter((o) => o.status === 'posse')
-    .sort((a, b) => b.signsHeld - a.signsHeld)[0];
-
-  // 1. CALL the most corrupted player — their deck has the most to turn against
-  //    them, and Whispers only exist because somebody bought a Sign.
-  const calls = legal.filter((c) => c.t === 'CALL');
-  if (calls.length && richest && (bySigns.get(richest.id) ?? 0) >= 2) {
-    const at = calls.find((c) => (c as { target: string }).target === richest.id);
-    if (at) return at;
-  }
-
-  // 2. Fill an empty slot. An occupied Street is Menace at Dusk and Doom on
-  //    top of it.
-  const summon = findCmd(legal, 'SUMMON');
-  if (summon) return summon;
-
-  // 3. Shut the door on whatever the table is leaning on. Signs while anyone
-  //    is corrupt enough to be relying on them, Kit otherwise — Kit is the
-  //    clearing engine, so closing it is what keeps the Street standing.
-  const shutters = legal.filter((c) => c.t === 'SHUTTER');
-  if (shutters.length) {
-    const want = richest && (bySigns.get(richest.id) ?? 0) >= 3 ? 'sign' : 'kit';
-    const pick = shutters.find((c) => (c as { cardType: string }).cardType === want);
-    if (pick) return pick;
-  }
-
-  // 4. Offer a Sign to whoever is least corrupt — the one still deciding.
-  const offers = legal.filter((c) => c.t === 'OFFER');
-  if (offers.length) {
-    const cleanest = [...view.opponents]
-      .filter((o) => o.status === 'posse')
-      .sort((a, b) => a.signsHeld - b.signsHeld)[0];
-    const at = offers.filter((c) => (c as { target: string }).target === cleanest?.id);
-    if (at.length) return at[0];
-  }
-
-  return calls[0] ?? endTurn(legal);
-}
 
 // ---------------------------------------------------------------- the bot
 
@@ -441,12 +426,17 @@ export function makeBot(policy: BuyPolicy): Bot {
 
     const you = view.you;
     if (!you) return endTurn(legal);
-    if (you.status === 'oldOne') return oldOneMove(view, legal);
     if (you.status === 'revenant') {
       return fallenMove(view, legal);
     }
     if (view.actionsLeft <= 0) return endTurn(legal);
 
+    /*
+      The Vessel falls through here too, and holds nothing but its own deck —
+      so `playsSign` never gates it (its cards are type `vessel`) and
+      `selfHarming` is the only filter that applies. Every Vessel card is
+      worth playing when drawn; that is what rationing by the draw means.
+    */
     const playable = you.hand.filter(
       (ci) =>
         !selfHarming(ci) &&

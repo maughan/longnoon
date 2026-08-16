@@ -15,9 +15,12 @@ import type { GameEvent } from '../engine/state';
 /** Every event kind the engine can emit, one specimen each. */
 const SPECIMENS: GameEvent[] = [
   { t: 'DREW', player: 'p0', n: 5 },
+  { t: 'RESHUFFLED', player: 'p0', n: 9 },
+  { t: 'DISCARDED', player: 'p0', n: 3, hand: true },
+  { t: 'DISCARDED', player: 'p0', n: 1, hand: false },
   { t: 'PLAYED', player: 'p0', cardId: 'colt', fevered: false },
   { t: 'BOUGHT', player: 'p0', cardId: 'winchester' },
-  { t: 'GRIT', player: 'p0', amount: 3 },
+  { t: 'GRIT', player: 'p0', amount: 3, cards: ['saddlebag'] },
   { t: 'DAMAGED', player: 'p1', amount: 2, trashed: ['saddlebag'] },
   { t: 'THREAT_DAMAGED', slot: 0, amount: 2 },
   { t: 'THREAT_CLEARED', slot: 0, cardId: 'barons-men' },
@@ -31,6 +34,9 @@ const SPECIMENS: GameEvent[] = [
   { t: 'PREVENTED', player: 'p0', amount: 2 },
   { t: 'SCRIED', player: 'p0', cardId: 'barons-men' },
   { t: 'WHISPERS', delta: 1, total: 4 },
+  { t: 'WHISPER_FILL', fill: 2, doom: 3, total: 2 },
+  { t: 'NAME_READ', player: 'p1', resolved: true, cardId: 'colt' },
+  { t: 'NAME_READ', player: 'p1', resolved: false },
   { t: 'DOOM', delta: 2, total: 9 },
   { t: 'FELL', player: 'p1', became: 'revenant' },
   { t: 'LAST_WORDS', player: 'p1', fevered: true, kept: 2 },
@@ -67,8 +73,15 @@ function anyView() {
 suite('the narrator', () => {
   test('every event kind either narrates or is deliberately silent', () => {
     const v = anyView();
-    // Book-keeping the table does not need read aloud.
-    const silent = new Set(['DREW', 'GRIT', 'CHOICE_REQUIRED']);
+    // Book-keeping the table does not need read aloud. Both describe to an
+    // empty string and the client drops the line.
+    //
+    // CHOICE_REQUIRED is not a thing that happened — it is a prompt.
+    // DISCARDED did happen, and is unspoken on purpose: whatever caused it is
+    // already narrated (the cash-in names the card, the turn beat marks the
+    // sweep), and the event exists so the SOUND has one source of truth rather
+    // than being inferred from three others.
+    const silent = new Set(['CHOICE_REQUIRED', 'DISCARDED']);
     for (const e of SPECIMENS) {
       const line = describe(e, v, 'p0');
       if (silent.has(e.t)) continue;
@@ -167,5 +180,47 @@ suite('the narrator', () => {
       }
     }
     expect(said).toBeGreaterThan(20);
+  });
+});
+
+
+suite('the chronicle', () => {
+  test('never prints a bare event tag', () => {
+    // "grit" and "drew" were reaching the log as the event name itself. The
+    // failure is silent: a new event simply appears as its own identifier.
+    const v = anyView();
+    for (const e of SPECIMENS) {
+      const line = describe(e, v, 'p0');
+      if (line === '') continue;             // deliberately not logged
+      expect(line, e.t).not.toBe(e.t.toLowerCase().replace(/_/g, ' '));
+      expect(line.split(' ').length, `${e.t} is too terse to read`)
+        .toBeGreaterThan(2);
+    }
+  });
+
+  test('names the card that was cashed in', () => {
+    const v = anyView();
+    expect(describe(
+      { t: 'GRIT', player: 'p1', amount: 1, cards: ['saddlebag'] }, v, 'p0',
+    )).toBe('Bell cashes in Saddlebag for 1 Grit');
+    // Yours reads in the second person, like the rest of the log.
+    expect(describe(
+      { t: 'GRIT', player: 'p0', amount: 2, cards: ['grubstake'] }, v, 'p0',
+    )).toBe('You cash in Grubstake for 2 Grit');
+  });
+
+  test('does not claim a card was cashed when none was', () => {
+    // Lantern Oil hands you Grit with nothing leaving your hand.
+    const v = anyView();
+    expect(describe({ t: 'GRIT', player: 'p0', amount: 1 }, v, 'p0'))
+      .toBe('You take 1 Grit');
+  });
+
+  test('counts the cards drawn, and gets the plural right', () => {
+    const v = anyView();
+    expect(describe({ t: 'DREW', player: 'p0', n: 1 }, v, 'p0'))
+      .toBe('You draw 1 card');
+    expect(describe({ t: 'DREW', player: 'p1', n: 5 }, v, 'p0'))
+      .toBe('Bell draws 5 cards');
   });
 });

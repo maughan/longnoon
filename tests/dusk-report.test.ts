@@ -6,6 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import { GameRoom } from '../server/room';
 import { duskReport, isDusk } from '../client/src/duskReport';
+import { narrate } from '../client/src/beats';
 import type { GameEvent } from '../engine/state';
 
 /** Events a Dusk can emit that the report is not expected to print. */
@@ -87,5 +88,43 @@ describe('the Dusk report', () => {
       { t: 'MENACE', slot: 1, cardId: 'rustlers', player: 'p0', amount: 1 },
     ], view, 'p0');
     expect(r.menace.filter((l) => l.yours)).toHaveLength(1);
+  });
+});
+
+describe('the Dusk report and the ticker do not both say it', () => {
+  /**
+   * Anything the Dusk sheet lists is tagged `fromDusk` and skipped by the
+   * ticker. This asserts the property over real games rather than trusting the
+   * tag: if the two ever disagree the player reads the same news twice, once in
+   * the sheet and once scrolling past behind it.
+   */
+  it('shows no ticker beat for anything a Dusk produced', () => {
+    let duskBatches = 0;
+    let leaked = 0;
+    for (const seed of ['dup-1', 'dup-2', 'dup-3']) {
+      const room = new GameRoom({
+        seed,
+        seats: [{ name: 'Ada', kind: 'bot' }, { name: 'Bell', kind: 'bot' },
+          { name: 'Cole', kind: 'bot' }],
+        marked: 0,
+      });
+      let prev: string | null = null;
+      let n = 0;
+      for (let i = 0; i < 900 && room.awaitingBot; i++) {
+        for (const u of room.stepBot() ?? []) {
+          if (u.seat !== 'p0') continue;
+          const beats = narrate(u.events, u.view, 'p0', prev, () => ++n);
+          if (isDusk(u.events)) {
+            duskBatches += 1;
+            // "Your turn" is deliberately kept: the sheet says what the night
+            // cost, then the ticker says who is up.
+            leaked += beats.filter((b) => !b.fromDusk && b.kind !== 'turn').length;
+          }
+          prev = u.view.activePlayer;
+        }
+      }
+    }
+    expect(duskBatches).toBeGreaterThan(10);
+    expect(leaked, 'Dusk lines also shown as popups').toBe(0);
   });
 });

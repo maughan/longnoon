@@ -64,6 +64,17 @@ export class GameRoom {
   private botCursor = 0;
   private readonly seed: string;
   private readonly defaultBotPolicy: string;
+  /**
+   * The deal, held until somebody is listening.
+   *
+   * `start()` returns the events that opened the game — the first Threats
+   * arriving, the first hand drawn — and they used to be thrown away with the
+   * rest of the return value. So the opening hand appeared with no line in the
+   * chronicle, no sound and no deal animation: the one hand every player looks
+   * at hardest arrived as if it had always been there.
+   */
+  private opening: GameEvent[] = [];
+
   /** Kept so a dev restart deals the same shape of game. */
   private readonly markedIndex: number | null;
   private readonly tuning?: Partial<Tuning>;
@@ -80,14 +91,16 @@ export class GameRoom {
       policy: s.policy ?? this.defaultBotPolicy,
       connected: (s.kind ?? 'human') === 'human',
     }));
-    this.state = start(
+    const opening = start(
       setup({
         seed: opts.seed,
         players: this.seats.map((s) => s.name),
         markedIndex: opts.marked ?? null,
         tuning: opts.tuning,
       }),
-    ).state;
+    );
+    this.state = opening.state;
+    this.opening = opening.events;
   }
 
   get winner(): GameState['winner'] {
@@ -102,6 +115,18 @@ export class GameRoom {
   get waitingOn(): PlayerId | null {
     if (this.state.winner) return null;
     return this.state.pending ? this.state.pending.player : this.state.activePlayer;
+  }
+
+  /**
+   * The seats nobody is driving.
+   *
+   * Public information — everyone watched the chairs being filled before the
+   * deal — but the engine has no idea: `PlayerState` has a role and a status,
+   * not a kind. Bots are a seating arrangement, so this travels with the
+   * transport rather than being wedged into `playerView`.
+   */
+  get botSeats(): PlayerId[] {
+    return this.seats.filter((s) => s.kind === 'bot').map((s) => s.id);
   }
 
   seat(id: PlayerId): Seat | undefined {
@@ -252,13 +277,15 @@ export class GameRoom {
    * honest way to see Act I again.
    */
   devRestart(seed: string): Update[] {
-    this.state = start(setup({
+    const opening = start(setup({
       seed,
       players: this.seats.map((s) => s.name),
       markedIndex: this.markedIndex,
       tuning: this.tuning,
-    })).state;
-    return this.broadcast([]);
+    }));
+    this.state = opening.state;
+    this.opening = opening.events;
+    return this.deal();
   }
 
   private broadcast(events: GameEvent[]): Update[] {
@@ -273,6 +300,18 @@ export class GameRoom {
   /** Current state for every seat, with no events — for a fresh connection. */
   sync(): Update[] {
     return this.broadcast([]);
+  }
+
+  /**
+   * The first broadcast of a game, carrying the deal.
+   *
+   * Delivered once. A later `sync` — someone rejoining mid-game — sends state
+   * with no events, which is right: they are catching up, not being dealt to.
+   */
+  deal(): Update[] {
+    const ev = this.opening;
+    this.opening = [];
+    return this.broadcast(ev);
   }
 
   // -------------------------------------------------------------- presence

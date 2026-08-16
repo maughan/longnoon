@@ -106,7 +106,7 @@ that buys nothing.
 |---|---|---|---|
 | `whisperThreshold` | 12 | **14** | The Turning lands later for Sign-buyers, giving them an Act I long enough to be worth the corruption. |
 | `vesselClear` | 12 | **32** | The pacing lever: the game ends when the posse burns the Vessel down, so this sets Act II's length. **37 traitorless** — the traitor is worth ~5 points. See Finding 7. |
-| `doomTarget` | 20 | **50** | Gives the Old One room to be ground down over ~5 rounds. Raising it alone only makes the game easier — it lengthens Act II only paired with `vesselClear`. |
+| `doomTarget` | 20 | **50** | Gives the Vessel room to be ground down over ~5 rounds. Raising it alone only makes the game easier — it lengthens Act II only paired with `vesselClear`. |
 | `omenMenace` | 0 | **1** | At 0, deck-as-health was dead content — nobody fell even at 8× `damagePerHit`. See Finding 4. |
 | `menacePerSign` | — | **0.45** | New. Flat attrition only ever threatened the zero-Sign deck; scaling the wound with the corruption that drew it reaches a balanced table too. See Finding 4. |
 | `markedAimDoomBonus` | 3 | **3** | Newly implemented, straight from the role card. Was a stub. See Finding 5. |
@@ -148,7 +148,7 @@ prototype, covered by `tests/actii.test.ts`):
 
 - The Vessel is a damage target — previously a flat 1 per action that no card
   could contribute to, so Act I purchases had no causal path to the result.
-- The Old One and Revenants aim their Fevered cards — the paper's "now you aim
+- The Vessel and Revenants aim their Fevered cards — the paper's "now you aim
   them again". CALL stays unaimed, as written.
 - The Omen reset — `vesselDamage` zeroes when an Omen enters the Street.
 - `DEAL_DAMAGE` no longer accepts a client-supplied `amount` (`9999` won
@@ -298,7 +298,7 @@ measure: no bot behaved differently when Marked, and the role's only mechanical
 hook — the secret aim — was a stub. Both are now implemented.
 
 **The aim, straight from the role card:** *"at the Turning, two other players
-must each hold 3 or more Signs. If they do, you begin the Old One's turn with +3
+must each hold 3 or more Signs. If they do, you begin the Vessel's turn with +3
 Doom."* The Marked player's own Signs do not count.
 
 **The Marked bot.** They cannot make anyone buy, so their only mechanical lever
@@ -346,7 +346,7 @@ clock the paper already gave the Revenant: *"You shrink. Strongest the moment yo
 turn, weaker every round after."* `refill` used to floor them at one card so they
 never actually ran out; now a Revenant who exhausts their deck is **gone for
 good** (`revenantDecay` per recycle). The posse's answer is to outlast them, not
-to dig a hole. The Old One still floors at one card so the endgame cannot stall.
+to dig a hole. The Vessel still floors at one card so the endgame cannot stall.
 
 Two things this exposed:
 
@@ -533,7 +533,7 @@ spending), Act I Bounty rewards, and the Marked player's +3 Doom.
 
 Puritan and Zealot differ **only** in `pick` (what to buy) and whether they will
 play a Sign; threat handling, spending, targeting and the Act II race are shared
-code. The Old One policy is fixed (always Whisper) across every experiment. These
+code. The Vessel policy is fixed (always Whisper) across every experiment. These
 are competent, not optimal, bots — in particular the shared Act II policy spends
 damage on the Vessel whenever a Threat cannot be finished outright, which may
 under-rate Threat-clearing for policies whose cards must choose. Note that bot
@@ -542,5 +542,5 @@ and *would* start dying.
 
 Two earlier claims in this document were wrong and have been corrected: the Omen
 gate was **not** undocumented (it is in the paper rules — it was dropped on the
-evidence in Finding 1, not for being unwritten), and the Old One **does** have a
+evidence in Finding 1, not for being unwritten), and the Vessel **does** have a
 PLAY action; what it lacked was the ability to aim.
