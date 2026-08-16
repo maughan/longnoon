@@ -1,0 +1,332 @@
+/* The Turning - Act I ends and something starts looking back.
+ *
+ * BEAT SHEET
+ *   0.00-0.87s  DRAIN   pips detach from the Whisper track and fly inward
+ *   0.61-1.45s  SEAL    they arrive as a ring of glyphs and begin to turn
+ *   0.87-1.52s  FILL    the disc floods with ink; the rays curl, then retract
+ *   1.48-1.60s  SKIP    two hard frames of black - the reality stutter
+ *   1.57-2.55s  FLOOD   ink takes the board
+ *   2.32-3.28s  OPEN    the disc splits and becomes the doorway
+ *   2.90-3.92s  WATCH   an eye opens inside the door; more open around it
+ *   3.63-5.67s  HOLD    the words, then clear
+ *
+ * Timings were scaled x1.45 from the first cut and given a further second of
+ * hold at the end: everything after the flood is meant to be looked AT, and the
+ * eye needs time to find the watchers before the words arrive. If you rescale
+ * again, scale every value here together - the overlaps between beats are what
+ * stop it reading as a list of separate tricks - and update TURNING_MS in
+ * Turning.tsx and `turningMs` in server/hub.ts to match.
+ *
+ * The Whispers becoming the seal is the load-bearing idea. Everything the
+ * table spent in Act I arrives as the circle that lets the thing through.
+ * A generic summoning ring would be decoration; this one is the scoreboard.
+ *
+ * Every transform-origin on an SVG child needs transform-box: fill-box, or
+ * it resolves against the root viewBox instead of the element.
+ */
+
+.ln-turning {
+  --t-ink: #14120f;
+  --t-paper: #f6f3ec;
+  --t-dread: #8a3324;
+}
+
+/* -- 1. drain / 2. seal ---------------------------------------------------
+ * Each pip carries its own --dx/--dy to a slot on the ring. They do not fade
+ * out and get replaced - they travel, so the ring is visibly built from them. */
+.ln-t-pip {
+  fill: var(--t-ink);
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ln-t-fly 899ms cubic-bezier(0.55, 0, 0.25, 1) forwards;
+}
+@keyframes ln-t-fly {
+  0% {
+    transform: translate(0, 0) scale(1);
+    fill: var(--t-ink);
+  }
+  22% {
+    transform: translate(0, -7px) scale(1.45);
+    fill: var(--t-dread);
+  }
+  100% {
+    transform: translate(var(--dx), var(--dy)) scale(0.72);
+    fill: var(--t-ink);
+  }
+}
+
+.ln-t-seal {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ln-t-seal 3625ms cubic-bezier(0.2, 0, 0.4, 1) 812ms forwards;
+}
+@keyframes ln-t-seal {
+  0% {
+    opacity: 0;
+    transform: rotate(0deg) scale(0.94);
+  }
+  14% {
+    opacity: 1;
+  }
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.55;
+    transform: rotate(-26deg) scale(1.06);
+  }
+}
+
+/* -- 3. fill --------------------------------------------------------------- */
+.ln-t-disc {
+  fill: transparent;
+  stroke: var(--t-ink);
+  animation: ln-t-fill 652ms cubic-bezier(0.4, 0, 0.6, 1) 870ms forwards;
+}
+@keyframes ln-t-fill {
+  0% {
+    fill: transparent;
+  }
+  55% {
+    fill: var(--t-dread);
+  }
+  100% {
+    fill: var(--t-ink);
+  }
+}
+
+/* Straight rays hand over to crooked ones. A sun whose rays bend is wrong in
+ * a way that needs no explaining, and it costs one crossfade. */
+.ln-t-rays-straight {
+  animation: ln-t-fade-out 377ms linear 812ms forwards;
+}
+@keyframes ln-t-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+.ln-t-rays-curled {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ln-t-curl 899ms cubic-bezier(0.5, 0, 0.8, 1) 812ms forwards;
+}
+@keyframes ln-t-curl {
+  0% {
+    opacity: 0;
+    transform: scale(1) rotate(0deg);
+  }
+  22% {
+    opacity: 0.95;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.3) rotate(-52deg);
+  }
+}
+
+/* -- 4. the stutter -------------------------------------------------------
+ * Two frames of hard black before the flood. Not a flash - a dropped frame.
+ * steps() makes it snap rather than pulse. */
+.ln-t-skip {
+  opacity: 0;
+  animation: ln-t-skip 130ms steps(1, end) 1479ms 2 forwards;
+}
+@keyframes ln-t-skip {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+/* -- 5. flood -------------------------------------------------------------- */
+.ln-t-flood {
+  transform-box: fill-box;
+  transform-origin: center;
+  transform: scale(0);
+  animation: ln-t-flood 986ms cubic-bezier(0.25, 0.6, 0.3, 1) 1566ms forwards;
+}
+@keyframes ln-t-flood {
+  0% {
+    transform: scale(0);
+  }
+  /* r=10 to scale 44 clears the 392px corner distance of a 680x380 box. */
+  100% {
+    transform: scale(44);
+  }
+}
+
+/* -- 6. open --------------------------------------------------------------- */
+.ln-t-split {
+  stroke-dasharray: 120;
+  stroke-dashoffset: 120;
+  animation: ln-t-splitdraw 609ms cubic-bezier(0.4, 0, 0.3, 1) 2320ms forwards;
+}
+@keyframes ln-t-splitdraw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.ln-t-door {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: ln-t-door 957ms cubic-bezier(0.3, 0, 0.2, 1) 2320ms forwards;
+}
+@keyframes ln-t-door {
+  0% {
+    opacity: 0;
+    transform: scaleY(0.02);
+  }
+  30% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+}
+
+/* -- 7. the eye -----------------------------------------------------------
+ * It opens slowly, holds, and does not blink. A blink would be a creature.
+ * Not blinking is worse. */
+.ln-t-eye {
+  transform-box: fill-box;
+  transform-origin: center;
+  transform: scaleY(0.04);
+  animation: ln-t-eye 1015ms cubic-bezier(0.3, 0, 0.25, 1) 2900ms forwards;
+}
+@keyframes ln-t-eye {
+  0% {
+    transform: scaleY(0.04);
+  }
+  100% {
+    transform: scaleY(1);
+  }
+}
+.ln-t-pupil {
+  transform-box: fill-box;
+  transform-origin: center;
+  transform: scaleY(0.04) scaleX(2.2);
+  animation: ln-t-pupil 1102ms cubic-bezier(0.3, 0, 0.25, 1) 2958ms forwards;
+}
+@keyframes ln-t-pupil {
+  0% {
+    transform: scaleY(0.04) scaleX(2.2);
+  }
+  100% {
+    transform: scaleY(1) scaleX(1);
+  }
+}
+
+/* Others open in the dark around it, off the centre line, barely there. */
+.ln-t-watcher {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ln-t-watcher 1305ms cubic-bezier(0.35, 0, 0.3, 1) forwards;
+}
+@keyframes ln-t-watcher {
+  0% {
+    opacity: 0;
+    transform: scaleY(0.05);
+  }
+  45% {
+    opacity: 0.3;
+    transform: scaleY(1);
+  }
+  100% {
+    opacity: 0.16;
+    transform: scaleY(1);
+  }
+}
+
+/* -- 8. hold --------------------------------------------------------------- */
+.ln-t-mark {
+  opacity: 0;
+  animation: ln-t-mark 812ms steps(3, end) 3596ms forwards;
+}
+.ln-t-liturgy {
+  opacity: 0;
+  animation: ln-t-mark 899ms steps(2, end) 3886ms forwards;
+}
+@keyframes ln-t-mark {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+.ln-t-root {
+  animation: ln-t-clear 700ms ease-in 4973ms forwards;
+}
+@keyframes ln-t-clear {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ln-t-pip,
+  .ln-t-seal,
+  .ln-t-disc,
+  .ln-t-rays-straight,
+  .ln-t-rays-curled,
+  .ln-t-skip,
+  .ln-t-flood,
+  .ln-t-split,
+  .ln-t-door,
+  .ln-t-eye,
+  .ln-t-pupil,
+  .ln-t-watcher,
+  .ln-t-mark,
+  .ln-t-liturgy,
+  .ln-t-root {
+    animation: none !important;
+  }
+  .ln-t-pip {
+    opacity: 0;
+  }
+  .ln-t-seal {
+    opacity: 1;
+    transform: none;
+  }
+  .ln-t-disc {
+    fill: var(--t-ink);
+  }
+  .ln-t-rays-straight,
+  .ln-t-rays-curled,
+  .ln-t-skip {
+    opacity: 0;
+  }
+  .ln-t-flood {
+    transform: scale(44);
+  }
+  .ln-t-split {
+    stroke-dashoffset: 0;
+  }
+  .ln-t-door,
+  .ln-t-mark,
+  .ln-t-liturgy {
+    opacity: 1;
+    transform: none;
+  }
+  .ln-t-eye,
+  .ln-t-pupil {
+    transform: none;
+  }
+  .ln-t-watcher {
+    opacity: 0.16;
+    transform: none;
+  }
+}

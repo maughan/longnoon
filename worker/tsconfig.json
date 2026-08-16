@@ -1,0 +1,10 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "types": ["@cloudflare/workers-types/2023-07-01", "@cloudflare/vitest-pool-workers"],
+    "moduleResolution": "Bundler",
+    "noEmit": true
+  },
+  "include": ["../worker", "../tests/worker", "../engine", "../content", "../server", "../sim"]
+}

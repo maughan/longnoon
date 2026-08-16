@@ -1,0 +1,16 @@
+node_modules/
+dist/
+client/dist/
+
+# wrangler's local state, including the local Durable Object storage
+.wrangler/
+.dev.vars
+
+# simulator output — regenerate with `npm run sim`
+sim/out/
+
+.DS_Store
+*.log
+.env
+.env.local
+.vercel

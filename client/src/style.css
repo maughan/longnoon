@@ -1,0 +1,1529 @@
+/* The Long Noon — a table, not a page.
+ *
+ * Three rules the layout follows:
+ *   1. The viewport IS the table. Nothing scrolls the whole page; regions scroll
+ *      inside themselves, so the Street never leaves the screen.
+ *   2. Your hand is always to hand — fixed along the bottom, where you would be
+ *      holding it.
+ *   3. If the rules will not let you do a thing, the thing does not light up.
+ *      Playable cards lift; the rest lie flat.
+ */
+
+:root {
+  --ink: #e6dccb;
+  --ink-dim: #9a8f80;
+  --ink-mute: #6d6459;
+
+  --night: #100e12; /* the dark outside the lamplight */
+  --dust: #1a171d;
+  --panel: #221e26;
+  --raised: #2a252f;
+  --edge: #3a3340;
+
+  --lamp: #d9a441; /* brass, lantern-oil, the noon sun */
+  --sign: #8d5aa6; /* the colour of things that know your name */
+  --blood: #a8443a;
+  --kit: #9c7a44;
+  --deed: #6f8452;
+
+  --card-w: 9.2rem;
+  --card-h: 12.9rem;
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  margin: 0;
+  background:
+    radial-gradient(120% 80% at 50% 0%, #241f28 0%, var(--night) 70%),
+    var(--night);
+  color: var(--ink);
+  font:
+    15px/1.5 ui-serif,
+    "Iowan Old Style",
+    Palatino,
+    Georgia,
+    serif;
+  overflow: hidden;
+}
+
+/* Wood-type headings without a webfont: weight, tracking, small caps. */
+h1,
+h2,
+.display {
+  font-variant-caps: small-caps;
+  letter-spacing: 0.12em;
+  font-weight: 700;
+}
+h1 {
+  font-size: 2.4rem;
+  margin: 0;
+  letter-spacing: 0.16em;
+}
+h2 {
+  font-size: 0.74rem;
+  letter-spacing: 0.2em;
+  color: var(--ink-mute);
+  margin: 0 0 0.5rem;
+}
+.muted {
+  color: var(--ink-dim);
+  font-size: 0.85em;
+}
+.kw {
+  text-decoration: underline dotted #6f6478;
+  text-underline-offset: 3px;
+  cursor: help;
+  border-radius: 2px;
+  outline: none;
+}
+.kw:hover,
+.kw:focus-visible {
+  color: var(--lamp);
+  text-decoration-color: var(--lamp);
+}
+.kw:focus-visible {
+  box-shadow: 0 0 0 2px #d9a44166;
+}
+
+/* one shared bubble, positioned at the keyword — never clipped by a rail */
+.tip {
+  position: fixed;
+  z-index: 90;
+  pointer-events: none;
+  display: grid;
+  gap: 0.25rem;
+  background: linear-gradient(#2c2632, #211c28);
+  border: 1px solid var(--lamp);
+  border-radius: 3px;
+  padding: 0.6rem 0.7rem;
+  box-shadow:
+    0 18px 40px -16px #000,
+    0 0 0 1px #00000060;
+  animation: tipin 0.1s ease-out;
+}
+.tip strong {
+  font-variant-caps: small-caps;
+  letter-spacing: 0.08em;
+  color: var(--lamp);
+  font-size: 0.95rem;
+}
+.tip strong svg {
+  color: var(--lamp);
+}
+.tip em {
+  color: var(--ink);
+  font-style: normal;
+  font-size: 0.84rem;
+}
+.tip span {
+  color: var(--ink-dim);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+@keyframes tipin {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(3px);
+  }
+}
+
+/* --- icons -------------------------------------------------------------- */
+/* They inherit `currentColor`, so an icon dims with its container and takes the
+ * track colour it belongs to. Never set a colour on the icon itself. */
+
+svg {
+  flex: 0 0 auto;
+}
+.coin,
+.stat,
+.chip,
+.pilebtn,
+.track,
+.card .whisper,
+.slot .name,
+.card .title,
+.glossary dt,
+.tip strong,
+.sheet-head button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.stat {
+  gap: 0.25rem;
+}
+.stat.off {
+  opacity: 0.4;
+  text-decoration: line-through;
+}
+.stat.bad {
+  color: var(--blood);
+}
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.1rem 0.7rem;
+}
+
+/* The type mark on a card sits with the name, at the weight of a bullet. */
+.card .title {
+  align-items: flex-start;
+  gap: 0.35rem;
+}
+.card .title .mark {
+  margin-top: 0.1rem;
+  opacity: 0.75;
+}
+.card.sign .mark {
+  color: var(--sign);
+}
+.card.kit .mark {
+  color: var(--kit);
+}
+.card.deed .mark {
+  color: var(--deed);
+}
+.card.scar .mark {
+  color: var(--blood);
+}
+.card.fevered .mark {
+  color: var(--sign);
+  opacity: 1;
+}
+
+button {
+  background: linear-gradient(#2e2833, #241f28);
+  color: var(--ink);
+  border: 1px solid var(--edge);
+  padding: 0.35rem 0.8rem;
+  border-radius: 2px;
+  font: inherit;
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition:
+    border-color 0.12s,
+    transform 0.08s;
+}
+button:hover:not(:disabled) {
+  border-color: var(--lamp);
+}
+button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+button:disabled {
+  opacity: 0.28;
+  cursor: default;
+}
+button.primary {
+  background: linear-gradient(#4a3a1e, #35290f);
+  border-color: var(--lamp);
+}
+input {
+  background: #14121799;
+  color: var(--ink);
+  border: 1px solid var(--edge);
+  padding: 0.35rem 0.55rem;
+  border-radius: 2px;
+  font: inherit;
+  width: 8rem;
+}
+label {
+  display: inline-flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin: 0 1rem 0.6rem 0;
+}
+
+/* ----------------------------------------------------------------- lobby */
+
+.lobby {
+  height: 100%;
+  display: grid;
+  place-content: center;
+  max-width: 42rem;
+  margin: 0 auto;
+  padding: 2rem;
+  gap: 0.4rem;
+  overflow: auto;
+}
+.lobby .rule {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--edge), transparent);
+  margin: 1.4rem 0 0.6rem;
+}
+.tagline {
+  color: var(--ink-dim);
+  font-style: italic;
+  margin: 0.2rem 0 0;
+}
+.hint {
+  color: var(--ink-mute);
+  font-size: 0.8rem;
+  font-style: italic;
+  max-width: 34rem;
+}
+.warn {
+  color: var(--blood);
+}
+.code {
+  font-size: 1.05rem;
+  letter-spacing: 0.1em;
+}
+
+/* --- the waiting room -------------------------------------------------- */
+
+.waiting .chairs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.35rem;
+  max-width: 30rem;
+}
+.waiting .chairs li {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--edge);
+  border-radius: 3px;
+  background: #1d1a22;
+}
+.waiting .chairs li.open {
+  border-style: dashed;
+  background: none;
+}
+.waiting .chairs .who {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex: 1;
+  font-variant-caps: small-caps;
+  letter-spacing: 0.06em;
+}
+.waiting .chairs li.open .who {
+  color: var(--ink-mute);
+  font-style: italic;
+}
+.waiting .chairs li.bot .who {
+  color: var(--ink-dim);
+}
+.waiting .chairs button {
+  font-size: 0.74rem;
+  padding: 0.18rem 0.5rem;
+}
+
+/* ----------------------------------------------------------------- table */
+
+.app {
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+/* --- header: the tracks, always visible ------------------------------- */
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 1.6rem;
+  flex-wrap: wrap;
+  padding: 0.55rem 1.1rem;
+  background: linear-gradient(#221e26, #191620);
+  border-bottom: 1px solid var(--edge);
+}
+.act {
+  font-variant-caps: small-caps;
+  letter-spacing: 0.1em;
+}
+.act small {
+  display: block;
+  color: var(--ink-mute);
+  font-size: 0.7rem;
+  letter-spacing: 0.14em;
+}
+
+.track {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+.track > span {
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  color: var(--ink-mute);
+  font-variant-caps: small-caps;
+}
+.track > svg {
+  color: var(--ink-mute);
+}
+.track.doom > svg {
+  color: var(--blood);
+}
+.track.vessel > svg {
+  color: var(--lamp);
+}
+.track.whisper > svg {
+  color: var(--sign);
+}
+.pips {
+  display: flex;
+  gap: 3px;
+}
+.pip {
+  width: 7px;
+  height: 13px;
+  border-radius: 1px;
+  background: #2b2630;
+  border: 1px solid #332d3a;
+}
+.pip.on {
+  background: var(--sign);
+  border-color: var(--sign);
+  box-shadow: 0 0 6px -1px var(--sign);
+}
+.track.doom .pip.on {
+  background: var(--blood);
+  border-color: var(--blood);
+  box-shadow: 0 0 6px -1px var(--blood);
+}
+.track.vessel .pip.on {
+  background: var(--lamp);
+  border-color: var(--lamp);
+  box-shadow: 0 0 6px -1px var(--lamp);
+}
+
+.self {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+}
+.coin {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3rem;
+}
+.coin b {
+  font-size: 1.15rem;
+  color: var(--lamp);
+}
+.coin > svg {
+  color: var(--lamp);
+}
+.turnflag {
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  font-variant-caps: small-caps;
+  color: var(--ink-mute);
+}
+.turnflag.mine {
+  color: var(--lamp);
+}
+.turnflag.busy::after {
+  content: "…";
+  animation: dots 1.4s steps(4) infinite;
+}
+@keyframes dots {
+  0% {
+    content: ".";
+  }
+  33% {
+    content: "..";
+  }
+  66% {
+    content: "…";
+  }
+}
+
+/* --- middle: the Street, and nothing else ------------------------------ */
+/* The Street is what every player is looking at, so it gets the middle of the
+ * screen. The market is somewhere you go and come back from. */
+
+.felt {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 17rem;
+  min-height: 0;
+}
+.centre {
+  display: grid;
+  place-content: center;
+  min-height: 0;
+  padding: 1rem 1.4rem;
+  overflow: auto;
+}
+/* While a playable card is in the air the whole felt will take it. Dropping on
+ * a Threat aims at that Threat; dropping anywhere else just plays it. */
+.centre.takes {
+  background: radial-gradient(70% 60% at 50% 45%, #d9a4410f, transparent 70%);
+}
+.stage {
+  display: grid;
+  gap: 0.8rem;
+  justify-items: center;
+  width: 100%;
+}
+.stage h2 {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.street {
+  display: flex;
+  gap: 1.1rem;
+  width: min(58rem, 100%);
+}
+.slot {
+  flex: 1 1 0;
+  min-height: 14rem;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  padding: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.45rem;
+  position: relative;
+}
+.slot svg {
+  border-radius: 6px;
+  box-shadow: 0 10px 26px -14px #000;
+}
+.slot.vacant {
+  border-style: dashed;
+  background: none;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-mute);
+  font-size: 0.78rem;
+  font-variant-caps: small-caps;
+  letter-spacing: 0.12em;
+}
+.slot.omen svg {
+  box-shadow:
+    0 10px 26px -14px #000,
+    0 0 26px -6px var(--sign);
+}
+.wound {
+  height: 4px;
+  width: 168px;
+  background: #2b2630;
+  border-radius: 2px;
+}
+.wound div {
+  height: 100%;
+  background: var(--blood);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+.hush {
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  font-variant-caps: small-caps;
+  color: var(--ink-mute);
+}
+
+/* --- a thing you may click ---------------------------------------------- */
+/* Targets announce themselves. Nothing else on screen glows like this. */
+
+/* A slot that will accept the card currently being carried. */
+.slot.takes {
+  border-color: #55483a;
+}
+.slot.takes:hover {
+  border-color: var(--lamp);
+  background: #241d16;
+  box-shadow:
+    0 0 0 1px var(--lamp),
+    0 0 30px -10px var(--lamp);
+}
+.slot.takes:hover::after {
+  content: "strike this";
+  position: absolute;
+  inset: auto 0 -1.35rem 0;
+  text-align: center;
+  font-size: 0.66rem;
+  letter-spacing: 0.14em;
+  font-variant-caps: small-caps;
+  color: var(--lamp);
+}
+
+.hot {
+  cursor: pointer;
+  outline: none;
+}
+.slot.hot,
+.seat.hot {
+  border-color: var(--lamp);
+  animation: beckon 1.5s ease-in-out infinite;
+}
+.slot.hot:hover,
+.seat.hot:hover,
+.slot.hot:focus-visible,
+.seat.hot:focus-visible {
+  animation: none;
+  border-color: var(--lamp);
+  background: #2c2318;
+  box-shadow:
+    0 0 0 1px var(--lamp),
+    0 0 34px -8px var(--lamp);
+}
+.slot.hot::after {
+  content: "click to choose";
+  position: absolute;
+  inset: auto 0 -1.35rem 0;
+  text-align: center;
+  font-size: 0.66rem;
+  letter-spacing: 0.14em;
+  font-variant-caps: small-caps;
+  color: var(--lamp);
+}
+@keyframes beckon {
+  50% {
+    box-shadow:
+      0 0 0 1px #d9a44166,
+      0 0 26px -10px var(--lamp);
+  }
+}
+
+/* --- a sheet you pull out: the market ---------------------------------- */
+
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  background: #0b0a0ce8;
+  display: grid;
+  place-items: center;
+  padding: 2rem 1.5rem;
+  animation: fade 0.16s ease;
+}
+.sheet-inner {
+  width: min(72rem, 100%);
+  max-height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 1rem;
+  background: linear-gradient(#221e26, #191620);
+  border: 1px solid var(--edge);
+  border-radius: 4px;
+  padding: 1.1rem 1.3rem 1.3rem;
+  box-shadow: 0 30px 80px -30px #000;
+}
+.sheet-inner.narrow {
+  width: min(30rem, 100%);
+}
+.sheet-head {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+}
+.sheet-head h1 {
+  font-size: 1.5rem;
+  margin-right: 0.6rem;
+}
+.sheet-head .coin {
+  margin-left: auto;
+}
+.shelf {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+  overflow: auto;
+  align-content: flex-start;
+  padding: 0.4rem 0.1rem 0;
+}
+
+/* --- the right rail --------------------------------------------------- */
+
+.side {
+  border-left: 1px solid var(--edge);
+  background: #17141b;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+}
+.posse {
+  padding: 0.8rem 0.9rem;
+  border-bottom: 1px solid var(--edge);
+}
+.who {
+  display: grid;
+  gap: 0.35rem;
+}
+.seat {
+  padding: 0.35rem 0.5rem;
+  border-radius: 2px;
+  border: 1px solid transparent;
+  display: grid;
+  gap: 0.1rem;
+}
+.seat.acting {
+  border-color: var(--lamp);
+  background: #241d16;
+}
+.seat.mine {
+  border-top: 1px solid var(--edge);
+  border-radius: 0;
+  margin-top: 0.35rem;
+  padding-top: 0.45rem;
+}
+.seat .top {
+  display: flex;
+  gap: 0.45rem;
+  align-items: baseline;
+}
+.seat .top strong {
+  font-variant-caps: small-caps;
+  letter-spacing: 0.05em;
+}
+.chip {
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border: 1px solid var(--edge);
+  border-radius: 2px;
+  padding: 0.05rem 0.3rem;
+  color: var(--ink-mute);
+  gap: 0.22rem;
+}
+.chip.sign {
+  color: var(--sign);
+  border-color: var(--sign);
+}
+.chip.bad {
+  color: var(--blood);
+  border-color: var(--blood);
+}
+.vitals {
+  font-size: 0.74rem;
+  color: var(--ink-mute);
+}
+
+.chronicle {
+  padding: 0.8rem 0.9rem;
+  overflow: auto;
+  min-height: 0;
+}
+.chronicle ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 0.8rem;
+  color: var(--ink-dim);
+}
+.chronicle li {
+  padding: 0.18rem 0;
+  border-bottom: 1px solid #201c25;
+}
+.chronicle li:first-child {
+  color: var(--ink);
+}
+
+/* --- your hand, along the bottom -------------------------------------- */
+
+.hand {
+  border-top: 1px solid var(--edge);
+  background: linear-gradient(#1d1a22, #141118);
+  padding: 0.7rem 1.1rem 0.9rem;
+  display: grid;
+  gap: 0.55rem;
+}
+.hand-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+.piles {
+  display: flex;
+  gap: 0.4rem;
+  margin-left: auto;
+}
+.pile {
+  position: relative;
+}
+.pilebtn {
+  font-size: 0.74rem;
+  padding: 0.18rem 0.5rem;
+}
+.pilelist {
+  position: absolute;
+  bottom: 120%;
+  right: 0;
+  z-index: 30;
+  min-width: 12rem;
+  max-height: 15rem;
+  overflow: auto;
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 3px;
+  padding: 0.5rem 0.6rem;
+  display: grid;
+  gap: 0.18rem;
+  font-size: 0.8rem;
+  color: var(--ink-dim);
+  box-shadow: 0 12px 30px -10px #000;
+}
+/* Deck | hand | discard, laid out the way they sit on the table in front of
+ * you. The piles are fixed width so the hand keeps every pixel that is left. */
+.hand-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 1.1rem;
+  align-items: center;
+  height: 200px;
+}
+.fan {
+  display: flex;
+  gap: 0.55rem;
+  overflow-x: auto;
+  padding: 0.25rem 0 0.4rem;
+  align-items: flex-end;
+  min-height: calc(var(--card-h) + 0.65rem);
+}
+
+/* --- the two piles ------------------------------------------------------ */
+
+:root {
+  --pile-w: 6.4rem;
+  --pile-h: 9rem;
+}
+
+.pilespot {
+  position: relative;
+  display: grid;
+  gap: 0.3rem;
+  justify-items: center;
+}
+.pilelabel {
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  font-variant-caps: small-caps;
+  color: var(--ink-mute);
+  display: inline-flex;
+  gap: 0.3rem;
+}
+.pilelabel strong {
+  color: var(--ink);
+}
+
+.deckstack,
+.discard {
+  position: relative;
+  width: var(--pile-w);
+  height: var(--pile-h);
+  padding: 0;
+  border-radius: 4px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: transform 0.12s ease;
+}
+.deckstack:hover,
+.discard:hover {
+  transform: translateY(-4px);
+}
+
+/* Depth is drawn, not stated: leaves of the pile showing behind the top card.
+ * The stack visibly thins as damage takes cards off you, which is the point of
+ * deck-as-health. */
+.deckstack::before,
+.deckstack::after,
+.discard::before,
+.discard::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 4px;
+  border: 1px solid var(--edge);
+  background: linear-gradient(#241f28, #1b1821);
+}
+.deckstack::before,
+.discard::before {
+  transform: translate(3px, 3px);
+}
+.deckstack::after,
+.discard::after {
+  transform: translate(6px, 6px);
+}
+.thick-1::before,
+.thick-1::after,
+.thick-2::after {
+  display: none;
+}
+
+.deckstack .face,
+.discard .face {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: 4px;
+  border: 1px solid var(--edge);
+  display: grid;
+  place-items: center;
+  gap: 0.3rem;
+  box-shadow: 0 6px 16px -10px #000;
+}
+
+/* The back of a card: one mark, struck twice, and a rule inside the border. */
+.deckstack .face {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border: none;
+  box-shadow: 0 6px 16px -10px #000;
+}
+
+/* Face up, and out of play: the eye should find your hand first, every time. */
+/* Face up, and out of play: the eye should find your hand first, every time. */
+.discard .face {
+  border: none;
+  padding: 0;
+  overflow: hidden;
+  filter: grayscale(1) brightness(0.68) contrast(0.95);
+  transition: filter 0.15s ease;
+}
+.discard:hover .face {
+  filter: grayscale(0.4) brightness(0.92);
+}
+
+/* An empty pile is an outline of where the pile should be. An empty DECK is
+ * the last thing you see before you fall, so it says so in blood. */
+.deckstack.empty,
+.discard.empty {
+  position: relative;
+  width: var(--pile-w);
+  height: var(--pile-h);
+  border: 1px dashed var(--edge);
+  border-radius: 4px;
+  background: none;
+  display: grid;
+  place-items: center;
+  box-shadow: none;
+}
+.deckstack.empty::before,
+.deckstack.empty::after,
+.discard.empty::before,
+.discard.empty::after {
+  display: none;
+}
+.deckstack.empty .face,
+.discard.empty .face {
+  position: static;
+  border: none;
+  background: none;
+  box-shadow: none;
+  filter: none;
+  padding: 0;
+  color: var(--ink-mute);
+  font-size: 0.72rem;
+  font-variant-caps: small-caps;
+  letter-spacing: 0.12em;
+}
+.deckstack.empty {
+  border-color: var(--blood);
+}
+.deckstack.empty .face {
+  color: var(--blood);
+}
+
+.pilelist.left {
+  left: 0;
+  right: auto;
+}
+
+/* --- the counter: where a card is turned into Grit ---------------------- */
+
+.counter {
+  width: var(--pile-w);
+  height: var(--pile-h);
+  border: 1px dashed var(--edge);
+  border-radius: 4px;
+  background: none;
+  color: var(--ink-mute);
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 0.35rem;
+  transition:
+    border-color 0.12s,
+    background 0.12s,
+    transform 0.12s;
+}
+.counter .cta {
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  font-variant-caps: small-caps;
+}
+.counter:hover {
+  border-color: var(--lamp);
+  color: var(--lamp);
+}
+/* Lit whenever the card in the air can be sold — the answer to "can I?" should
+ * arrive before the card gets there, not after. */
+.counter.takes {
+  border-style: solid;
+  border-color: var(--lamp);
+  color: var(--lamp);
+  background: linear-gradient(#2c2318, #221a10);
+}
+.counter.over {
+  transform: scale(1.04);
+  box-shadow:
+    0 0 0 1px var(--lamp),
+    0 0 30px -8px var(--lamp);
+}
+
+/* --- cards -------------------------------------------------------------- */
+/* A card is an SVG drawing (components/CardFace) — frame, cost, coin, rules and
+ * whisper load are all inside it. What is left out here is what the drawing must
+ * not know about: whether you can play it, and what happens when you do. */
+
+.card {
+  position: relative;
+  flex: 0 0 auto;
+  line-height: 0;
+  transition:
+    transform 0.12s ease,
+    filter 0.12s ease;
+}
+.card svg {
+  display: block;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px -3px #000;
+}
+.card.playable {
+  cursor: pointer;
+}
+.card.playable:hover {
+  transform: translateY(-9px);
+}
+.card.playable:hover svg {
+  box-shadow:
+    0 16px 30px -12px #000,
+    0 0 0 1px var(--lamp);
+}
+.card.spent {
+  filter: grayscale(0.7) brightness(0.62);
+}
+
+/* The mouse plays a card by dragging it. The buttons are the keyboard path and
+ * appear only when the card has focus — so tabbing still reaches every move
+ * without putting two competing affordances on every card. */
+.card .acts {
+  position: absolute;
+  left: 50%;
+  bottom: 0.3rem;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  line-height: 1.4;
+}
+/* Only a card you can DRAG hides its buttons — dragging is the affordance
+ * there, and two competing ones on the same card is clutter. Nothing on the
+ * market shelf is draggable, so Buy stays where you can see it. This rule was
+ * briefly unscoped and quietly removed the only way to buy anything. */
+.card.draggable .acts {
+  display: none;
+}
+.card.draggable:focus-within .acts {
+  display: flex;
+}
+
+/* On the shelf the card itself is the button — the same direct handling as
+ * dragging one out of your hand, rather than hunting for a control. */
+.card.pickable {
+  cursor: pointer;
+}
+.card.pickable:focus-visible svg {
+  box-shadow: 0 0 0 2px var(--lamp);
+}
+
+.card.draggable {
+  cursor: grab;
+}
+.card.draggable:active {
+  cursor: grabbing;
+}
+/* The card being carried stays visible but reads as lifted off the table. */
+.card.draggable:active svg {
+  box-shadow: 0 22px 34px -14px #000;
+}
+.card .acts button {
+  padding: 0.18rem 0.5rem;
+  font-size: 0.72rem;
+  background: linear-gradient(#2e2833ee, #241f28ee);
+}
+
+/* --- choices, and the moment it turns ---------------------------------- */
+
+.choice {
+  position: fixed;
+  inset: auto 0 0 0;
+  z-index: 40;
+  background: linear-gradient(#2a2114, #1d1710);
+  border-top: 1px solid var(--lamp);
+  padding: 0.9rem 1.1rem;
+  display: grid;
+  gap: 0.6rem;
+  box-shadow: 0 -18px 40px -22px #000;
+}
+.choice h2 {
+  color: var(--lamp);
+  margin: 0;
+}
+.choice .opts {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* The Turning takes the whole screen for 3.1s, once a game.
+ *
+ * The paper ground is not decoration: the piece opens with near-black pips and
+ * a near-black seal, which on the felt would be invisible until the ink flood
+ * arrives a second later. It gets its colour from the component's own
+ * --t-paper, so the two cannot drift apart. */
+.turning-stage {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+}
+.turning-stage .ln-turning {
+  background: var(--t-paper);
+}
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+
+.verdict {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  text-align: center;
+  gap: 0.8rem;
+  padding: 2rem;
+  background: #000000ee;
+}
+.verdict h1 {
+  font-size: 2.6rem;
+  color: var(--lamp);
+}
+.verdict .opts {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 0.6rem;
+}
+
+/* Who everyone turned out to be — the first question asked after any game with
+ * a hidden role in it, and the one the rail is too small to answer. */
+.whowas {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0.6rem 0 0;
+  padding: 0.8rem 1.2rem;
+  min-width: 18rem;
+  border-top: 1px solid var(--edge);
+  border-bottom: 1px solid var(--edge);
+}
+.whowas > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 1.6rem;
+}
+.whowas dt {
+  font-variant-caps: small-caps;
+  letter-spacing: 0.08em;
+}
+.whowas dd {
+  margin: 0;
+  color: var(--ink-dim);
+  font-size: 0.84rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+/* Back to the verdict after a look at the final board. */
+.verdict-back {
+  position: fixed;
+  z-index: 61;
+  top: 4.6rem;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+/* --- the table saying what it just did --------------------------------- */
+/* Sits over the felt, never in front of a target: pointer-events are off, so a
+ * beat can land while you are mid-click on a Threat. */
+
+.beat {
+  position: fixed;
+  z-index: 45;
+  pointer-events: none;
+  top: 4.6rem;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(36rem, 90vw);
+  text-align: left;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.1rem 0.7rem;
+  align-items: center;
+  padding: 0.6rem 1.2rem 0.6rem 1rem;
+  background: linear-gradient(#2a2530f2, #1d1a24f2);
+  border: 1px solid var(--edge);
+  border-left: 3px solid var(--ink-mute);
+  border-radius: 3px;
+  box-shadow: 0 18px 44px -20px #000;
+  animation: beatin 0.22s cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+.beat .beatmark {
+  grid-row: 1 / span 2;
+  color: var(--ink-mute);
+  opacity: 0.9;
+}
+.beat strong {
+  font-variant-caps: small-caps;
+  letter-spacing: 0.07em;
+  font-size: 1.12rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+.beat em {
+  font-style: normal;
+  font-size: 0.82rem;
+  color: var(--ink-dim);
+}
+/* One line and no mark: centre it rather than leave a hole. */
+.beat.turn {
+  grid-template-columns: minmax(0, 1fr);
+  text-align: center;
+}
+
+/* Dusk is the one beat with a picture. The sun takes the top and the words sit
+ * under it, so the whole thing reads as one event rather than a labelled icon. */
+.beat.dusk {
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: center;
+  text-align: center;
+  gap: 0.35rem;
+  padding: 0.9rem 1.6rem 1rem;
+  border-left: 1px solid var(--lamp);
+  border-color: var(--lamp);
+  background: linear-gradient(#2e2418f5, #1c150ef5);
+  color: var(--lamp);
+}
+.beat.dusk strong {
+  color: var(--lamp);
+  font-size: 1.35rem;
+  letter-spacing: 0.14em;
+}
+.beat.dusk .ln-dusk {
+  display: block;
+  margin-bottom: -0.2rem;
+}
+
+.beat.act {
+  border-left-color: var(--lamp);
+}
+.beat.act .beatmark {
+  color: var(--lamp);
+}
+.beat.omen {
+  border-left-color: var(--sign);
+}
+.beat.omen strong,
+.beat.omen .beatmark {
+  color: var(--sign);
+}
+.beat.dire {
+  border-left-color: var(--blood);
+}
+.beat.dire strong,
+.beat.dire .beatmark {
+  color: var(--blood);
+}
+
+/* Whose turn it is, is a different kind of statement: centred, no left rule. */
+.beat.turn {
+  border-left: 1px solid var(--lamp);
+  border-color: var(--lamp);
+  background: linear-gradient(#332818f2, #221a10f2);
+  padding: 0.7rem 2rem;
+}
+.beat.turn strong {
+  color: var(--lamp);
+  font-size: 1.3rem;
+  letter-spacing: 0.12em;
+}
+
+@keyframes beatin {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-0.5rem);
+  }
+}
+
+/* --- the Dusk report ---------------------------------------------------- */
+/* The one moment where a lot happens at once and none of it is yours. Big
+ * enough to be read rather than watched, and dismissed by whoever is reading
+ * it — the table does not wait. */
+
+.dusksheet .sheet-inner {
+  width: min(38rem, 100%);
+  gap: 0.6rem;
+  border-color: var(--lamp);
+  padding: 0;
+  overflow: hidden;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+.dusk-head {
+  display: grid;
+  justify-items: center;
+  gap: 0.2rem;
+  padding: 1.2rem 1.4rem 0.6rem;
+  color: var(--lamp);
+  background: linear-gradient(#2e2418, #221a10 70%, transparent);
+}
+.dusk-head h1 {
+  font-size: 1.9rem;
+  letter-spacing: 0.18em;
+  margin: -0.4rem 0 0;
+}
+.dusk-head .ln-dusk {
+  max-width: 100%;
+  height: auto;
+}
+
+.dusk-body {
+  overflow: auto;
+  padding: 0.4rem 1.6rem 0.6rem;
+  display: grid;
+  gap: 0.9rem;
+}
+.dusk-body section {
+  display: grid;
+  gap: 0.3rem;
+}
+.dusk-body h2 {
+  margin: 0;
+  color: var(--ink-mute);
+}
+.dusk-body ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.25rem;
+}
+.dusk-body li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.88rem;
+  color: var(--ink-dim);
+  padding: 0.15rem 0;
+}
+.dusk-body li svg {
+  align-self: center;
+  color: var(--ink-mute);
+}
+.dusk-body li.dire svg {
+  color: var(--blood);
+}
+/* Your own losses read first — at a five-player table most of this list is
+ * about somebody else. */
+.dusk-body li.yours {
+  color: var(--ink);
+}
+.dusk-body li.yours::after {
+  content: "you";
+  margin-left: auto;
+  font-size: 0.6rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--lamp);
+  border: 1px solid var(--lamp);
+  border-radius: 2px;
+  padding: 0 0.25rem;
+  align-self: center;
+}
+.dusksheet .opts {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.6rem 1.4rem 1.1rem;
+}
+
+/* --- settings ----------------------------------------------------------- */
+
+/* Development tools sit in a marked-off box, because they are not the game. */
+.devbox {
+  display: inline-flex;
+  gap: 0.3rem;
+  align-items: center;
+  padding: 0.12rem 0.3rem;
+  border: 1px dashed #55414a;
+  border-radius: 3px;
+}
+.pilebtn.warn {
+  color: var(--blood);
+  border-color: #5a3a36;
+}
+.pilebtn.warn:hover:not(:disabled) {
+  border-color: var(--blood);
+}
+
+.pilebtn.cog {
+  padding: 0.25rem 0.4rem;
+}
+.pilebtn.cog svg {
+  display: block;
+}
+
+.settings {
+  display: grid;
+  gap: 1.1rem;
+  padding: 0.2rem 0.2rem 0;
+}
+.settings .row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0;
+}
+.settings > .hint {
+  margin: -0.75rem 0 0;
+}
+
+.slider {
+  display: grid;
+  gap: 0.3rem;
+}
+.slider.off {
+  opacity: 0.38;
+}
+.slider .row {
+  justify-content: space-between;
+}
+.slider .name {
+  font-variant-caps: small-caps;
+  letter-spacing: 0.12em;
+  font-size: 0.82rem;
+}
+.slider .pct {
+  font-size: 0.78rem;
+  color: var(--lamp);
+  font-variant-numeric: tabular-nums;
+}
+.slider .hint {
+  margin: 0;
+}
+
+/* A rail with a brass head on it, rather than whatever the OS supplies —
+ * the default control is the one thing on screen that looks like a web page. */
+.slider input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 1.1rem;
+  background: none;
+  cursor: pointer;
+}
+.slider input[type="range"]::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(
+    90deg,
+    var(--lamp) 0 var(--fill, 50%),
+    #332d3a var(--fill, 50%) 100%
+  );
+}
+.slider input[type="range"]::-moz-range-track {
+  height: 3px;
+  border-radius: 2px;
+  background: #332d3a;
+}
+.slider input[type="range"]::-moz-range-progress {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--lamp);
+}
+.slider input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 1.05rem;
+  height: 1.05rem;
+  margin-top: -0.48rem;
+  border-radius: 50%;
+  background: radial-gradient(circle at 34% 28%, #f0cd7c, #b8862f 60%, #7a5716);
+  border: 1px solid #f3d68f;
+  box-shadow: 0 2px 5px -2px #000;
+}
+.slider input[type="range"]::-moz-range-thumb {
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 50%;
+  background: radial-gradient(circle at 34% 28%, #f0cd7c, #b8862f 60%, #7a5716);
+  border: 1px solid #f3d68f;
+}
+.slider input[type="range"]:disabled {
+  cursor: default;
+}
+
+/* --- glossary ---------------------------------------------------------- */
+
+.glossary {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  overflow: auto;
+  background: #0b0a0ceb;
+  padding: 3rem 1.5rem;
+}
+.glossary .inner {
+  max-width: 46rem;
+  margin: 0 auto;
+  display: grid;
+  gap: 0.9rem;
+}
+.glossary dl {
+  margin: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+.glossary dt {
+  font-variant-caps: small-caps;
+  letter-spacing: 0.08em;
+  font-size: 1.05rem;
+  color: var(--lamp);
+  gap: 0.45rem;
+}
+.glossary dd {
+  margin: 0.1rem 0 0;
+  color: var(--ink-dim);
+  font-size: 0.88rem;
+}
+.glossary dd strong {
+  color: var(--ink);
+  font-weight: 600;
+}

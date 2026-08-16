@@ -1,0 +1,37 @@
+{
+  // The Long Noon — one Durable Object per room.
+  //
+  // `migrations` is not optional: a Durable Object class that is not declared
+  // in a migration fails to deploy with an error that does not mention
+  // migrations. `new_sqlite_classes` (not `new_classes`) is what the current
+  // free plan supports and what backs `ctx.storage` here.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "long-noon",
+  "main": "worker/index.ts",
+  "compatibility_date": "2025-08-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "durable_objects": {
+    "bindings": [
+      { "name": "ROOM", "class_name": "GameRoomObject" }
+    ]
+  },
+
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["GameRoomObject"]
+    }
+  ],
+
+  "observability": { "enabled": true },
+
+  "vars": {
+    // Comma-separated production hostnames. Vercel previews and localhost are
+    // always allowed — see originAllowed() for why an exact list breaks on PRs.
+    "ALLOWED_ORIGIN": "",
+    // "1" turns on the act controls. Never set this in production: forcing the
+    // Turning is the most valuable thing the Marked player could buy.
+    "LONG_NOON_DEV": "0"
+  }
+}

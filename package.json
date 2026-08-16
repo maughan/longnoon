@@ -1,0 +1,46 @@
+{
+  "name": "the-long-noon",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Weird-western deck builder. Pure deterministic rules engine plus simulator.",
+  "scripts": {
+    "check": "npm run typecheck && npm run typecheck:client && npm run typecheck:worker && npm run lint:determinism && npm run test && npm run test:worker",
+    "typecheck": "tsc --noEmit",
+    "lint:determinism": "node scripts/lint-determinism.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "sim": "tsx sim/cli.ts",
+    "sweep": "tsx sim/cli.ts sweep",
+    "serve": "tsx server/serve.ts",
+    "client": "vite",
+    "typecheck:client": "tsc -p client --noEmit",
+    "serve:dev": "LONG_NOON_DEV=1 tsx server/serve.ts",
+    "dev:server": "wrangler dev",
+    "deploy:server": "wrangler deploy",
+    "test:worker": "vitest run --config vitest.workers.config.ts",
+    "tunnel": "cloudflared tunnel --url http://localhost:8787",
+    "typecheck:worker": "tsc --noEmit -p worker/tsconfig.json",
+    "build:client": "vite build"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.8.60",
+    "@cloudflare/workers-types": "^4.20260702.1",
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^4.7.0",
+    "partyserver": "^0.5.10",
+    "partysocket": "^1.3.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8",
+    "wrangler": "^4.86.0"
+  },
+  "dependencies": {
+    "ws": "^8.21.3"
+  }
+}
