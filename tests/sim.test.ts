@@ -224,7 +224,10 @@ describe('isLegal — the server gate for online play', () => {
   it('is not fooled by key order — the client controls its own JSON', () => {
     const s = fresh();
     const me = s.activePlayer;
-    const uid = s.players[me].hand[0].uid;
+    // A card that DOES something: a hand full of Saddlebags is no longer
+    // playable, so `hand[0]` is not reliably a legal play any more.
+    const uid = s.players[me].hand
+      .find((ci) => card(ci.cardId).ops.length > 0)!.uid;
     expect(isLegal(s, me, { uid, t: 'PLAY_CARD' } as Command)).toBe(true);
   });
 

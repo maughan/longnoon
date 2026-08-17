@@ -11,9 +11,10 @@
 //      noun is wallpaper, and stops being read.
 
 import type { Card, Status } from '../../engine/state';
-// From the generated module, not the component: this file is reached from the
-// root tsconfig via the narration tests, which do not compile JSX.
-import type { IconName } from './components/iconsgen';
+// From the NAMES module, not the component: this file is reached from the root
+// tsconfig via the narration tests, which compile no JSX and cannot resolve a
+// `.png` import. `iconNames.ts` is types only, for exactly that reason.
+import type { IconName } from './components/iconNames';
 
 /** A card, by what it is. Trouble and Mythos are known by what they do to you. */
 export function iconForCard(def: Card, fevered = false): IconName {

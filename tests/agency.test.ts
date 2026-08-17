@@ -85,12 +85,16 @@ test('Act II agency', () => {
     genuinely runs out of things to do, and that is the burn-out clock rather
     than a dead mechanic.
 
-    Measured at 2 stuck turns in 584 once finished turns are excluded — the
-    Vessel's deck cannot run out, and `handSize` (5) exceeds `actionsPerTurn`
-    (3), so a hand cannot be emptied inside one turn. The two exceptions are
-    hands emptied across a Dusk boundary.
+    Was 0.99. It is 98.2% now, and the cause is a deliberate rule rather than
+    drift: a card with no ops is no longer offered as a play, so a Scar in hand
+    is dead weight instead of a wasted action. The Vessel collects Scars from
+    its own Dynamite, so it is the seat that notices.
+
+    That is the rule working. A turn holding nothing but Scars SHOULD have
+    nothing to do — the alternative is a button that moves a card from one pile
+    to another and calls it a move.
   */
-  expect(tally.vesselLive / tally.vessel).toBeGreaterThan(0.99);
+  expect(tally.vesselLive / tally.vessel).toBeGreaterThan(0.97);
   // The replacements are actually reachable, not merely defined. SHUTTER,
   // OFFER and CALL are cards now rather than commands, so what has to be
   // reachable is PLAY_CARD from the Vessel's seat — checked above by

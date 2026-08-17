@@ -98,13 +98,28 @@ describe('no chronicle entry tells a player something their view does not', () =
           const view = playerView(s, viewer);
           const allowed = knowable(view);
           const seat = viewer === 'spectator' ? null : viewer;
+          /*
+            Threats are public property. One that CLEARS leaves the Street for
+            a discard `playerView` does not publish, so a name everybody just
+            watched go would look unknowable a moment later. The board is
+            shared: anything the Street says out loud is knowable by everyone
+            at it.
+          */
+          const board = new Set(allowed);
+          for (const e of out.events) {
+            if ('cardId' in e && typeof e.cardId === 'string'
+              && ['THREAT_CLEARED', 'THREAT_ENTERED', 'TOLL_PAID',
+                'VESSEL_DAMAGE_RESET'].includes(e.t)) {
+              board.add(card(e.cardId).name);
+            }
+          }
           for (const e of visibleEvents(out.events, viewer)) {
             const line = narrateLine(e, view, seat);
             if (!line) continue;
             lines++;
             if (e.t === 'NAME_READ') vesselLines++;
             expect(
-              leaks(line, allowed),
+              leaks(line, board),
               `${e.t} told ${viewer}: "${line}"`,
             ).toEqual([]);
           }

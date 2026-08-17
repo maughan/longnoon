@@ -11,7 +11,9 @@
 // clause underneath.
 
 import { card } from '../../content/cards';
-import type { IconName } from './components/iconsgen';
+// The widened name space, not the raw glyph union: a beat's icon comes from
+// `iconForCard`, which returns a card's own artwork where it has some.
+import type { IconName } from './components/iconNames';
 import { iconForCard } from './icons';
 import type { GameEvent, PlayerId } from '../../engine/state';
 import type { ClientState } from '../../engine/view';

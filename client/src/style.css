@@ -424,23 +424,137 @@ label {
   grid-template-columns: minmax(0, 1fr) 17rem;
   min-height: 0;
 }
+/* The whole middle of the table stands on a street.
+ *
+ * The image is LAYERED UNDER A SCRIM rather than used raw, and that is the
+ * load-bearing part: the slots above it hold card faces on pale paper, and a
+ * photograph behind them competes with every one. The gradient keeps the
+ * middle dark enough that a 250x350 face is still the brightest thing on
+ * screen — the eye should find the cards first, always.
+ *
+ * `background-attachment: local` so it scrolls WITH the content rather than
+ * staying pinned while the Street slides over it; `.centre` is the scroll
+ * container (`overflow: auto`), and a fixed image under a moving board reads
+ * as a rendering fault.
+ *
+ * `url()` from the stylesheet rather than an imported module: Vite resolves and
+ * fingerprints it either way, and this keeps the styling in one place instead
+ * of splitting it between CSS and an inline style attribute.
+ */
 .centre {
   display: grid;
   place-content: center;
   min-height: 0;
   padding: 1rem 1.4rem;
   overflow: auto;
+  /* The street, behind a custom property so the act can swap the picture
+   * without every rule below repeating the whole layer stack. */
+  --street: url("./components/images/the-street.png");
+  background-image:
+    /* linear-gradient(#0b0a0cd9, #0b0a0cad 55%, #0b0a0ceb), */ var(
+    --street
+  );
+  background-size: cover, cover;
+  background-position:
+    center,
+    center bottom;
+  background-repeat: no-repeat, no-repeat;
+  background-attachment: local, local;
 }
 /* While a playable card is in the air the whole felt will take it. Dropping on
  * a Threat aims at that Threat; dropping anywhere else just plays it. */
+/* After the Turning it is the same street, later. Only the picture changes —
+ * scrim, sizing and scroll behaviour are inherited, so the two acts cannot
+ * drift apart in anything else. */
+.centre.mythos {
+  --street: url("./components/images/the-street-act-2.png");
+}
+
+/* Prepended to the existing layers, not `background:` — the shorthand would
+ * drop the image the moment a card left somebody's hand. */
 .centre.takes {
-  background: radial-gradient(70% 60% at 50% 45%, #d9a4410f, transparent 70%);
+  background-image:
+    radial-gradient(70% 60% at 50% 45%, #d9a4411f, transparent 70%),
+    linear-gradient(#0b0a0cd9, #0b0a0cad 55%, #0b0a0ceb), var(--street);
+  background-size: cover, cover, cover;
+  background-position:
+    center,
+    center,
+    center bottom;
+  background-repeat: no-repeat, no-repeat, no-repeat;
+  background-attachment: local, local, local;
 }
 .stage {
   display: grid;
   gap: 0.8rem;
   justify-items: center;
   width: 100%;
+}
+/* A shelf entry: the card, and what it costs.
+ *
+ * The price is dim by default and lit when you can afford it, so the shelf
+ * reads as a row of "yes" and "not yet" without anybody counting Grit. */
+.shelfitem {
+  display: grid;
+  justify-items: center;
+  gap: 0.25rem;
+}
+.shelfitem .price {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.78rem;
+  font-variant-caps: small-caps;
+  letter-spacing: 0.1em;
+  color: var(--ink-mute);
+}
+.shelfitem .price.afford {
+  color: var(--lamp);
+}
+
+/* A card shut by NOT THAT ONE.
+ *
+ * Desaturated and struck through with a band, because "no Play button" on its
+ * own reads as a bug: the player knows the card is playable and is looking at
+ * no way to play it. The rule has to be visible on the card it applies to. */
+.card.shut {
+  filter: grayscale(0.85) brightness(0.72);
+}
+.card.shut .shutband {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  padding: 0.15rem 0;
+  background: #0b0a0ce0;
+  border-top: 1px solid var(--blood);
+  border-bottom: 1px solid var(--blood);
+  color: var(--ink-dim);
+  font-size: 0.66rem;
+  font-variant-caps: small-caps;
+  letter-spacing: 0.14em;
+  pointer-events: none;
+}
+
+/* The Street's sign. Sized by HEIGHT with width auto, so either act's artwork
+ * keeps its own proportions — the two are unlikely to be cut to the same
+ * aspect, and a fixed width would squash one of them. */
+.stage h2.streetsign {
+  display: block;
+  line-height: 0;
+}
+.stage h2.streetsign img {
+  height: 3.2rem;
+  width: auto;
+  max-width: 100%;
+  /* Sits on the photograph, so it needs its own separation from it. */
+  filter: drop-shadow(0 4px 10px #000c);
 }
 .stage h2 {
   margin: 0;
@@ -472,13 +586,19 @@ label {
 }
 .slot.vacant {
   border-style: dashed;
-  background: none;
+  /* Its own ground, now that there is a photograph behind it — `none` left the
+   * placeholder text sitting directly on the picture and unreadable. */
+  background: #0b0a0c73;
   align-items: center;
   justify-content: center;
   color: var(--ink-mute);
   font-size: 0.78rem;
   font-variant-caps: small-caps;
   letter-spacing: 0.12em;
+  width: 168px;
+  height: 235.2px;
+  margin-top: 9px;
+  color: white;
 }
 .slot.omen svg {
   box-shadow:
@@ -773,7 +893,6 @@ label {
   background: linear-gradient(#1d1a22, #141118);
   padding: 0.7rem 1.1rem 0.9rem;
   display: grid;
-  gap: 0.55rem;
 }
 .hand-head {
   display: flex;
@@ -818,7 +937,7 @@ label {
   grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 1.1rem;
   align-items: center;
-  height: 200px;
+  height: 190px;
 }
 .fan {
   display: flex;
@@ -912,7 +1031,8 @@ label {
   box-shadow: 0 6px 16px -10px #000;
 }
 
-/* The back of a card: one mark, struck twice, and a rule inside the border. */
+/* The back of a card. A raster image now, so `cover` does the fitting — the
+ * border is off because the artwork carries its own edge. */
 .deckstack .face {
   width: 100%;
   height: 100%;
@@ -1059,30 +1179,12 @@ label {
   filter: grayscale(0.7) brightness(0.62);
 }
 
-/* The mouse plays a card by dragging it. The buttons are the keyboard path and
- * appear only when the card has focus — so tabbing still reaches every move
- * without putting two competing affordances on every card. */
-.card .acts {
-  position: absolute;
-  left: 50%;
-  bottom: 0.3rem;
-  transform: translateX(-50%);
-  display: flex;
-  gap: 0.3rem;
-  flex-wrap: wrap;
-  justify-content: center;
-  line-height: 1.4;
-}
-/* Only a card you can DRAG hides its buttons — dragging is the affordance
- * there, and two competing ones on the same card is clutter. Nothing on the
- * market shelf is draggable, so Buy stays where you can see it. This rule was
- * briefly unscoped and quietly removed the only way to buy anything. */
-.card.draggable .acts {
-  display: none;
-}
-.card.draggable:focus-within .acts {
-  display: flex;
-}
+/* The `.acts` rules that lived here are gone with the buttons they styled.
+ *
+ * They were the keyboard path: buttons revealed on focus so tabbing reached
+ * every move without putting two competing affordances on a card a pointer
+ * user would drag. Removed on request — there is no keyboard route to playing,
+ * buying or cashing in a card now. */
 
 /* On the shelf the card itself is the button — the same direct handling as
  * dragging one out of your hand, rather than hunting for a control. */
@@ -1125,12 +1227,6 @@ label {
 .card.draggable:active svg {
   box-shadow: 0 22px 34px -14px #000;
 }
-.card .acts button {
-  padding: 0.18rem 0.5rem;
-  font-size: 0.72rem;
-  background: linear-gradient(#2e2833ee, #241f28ee);
-}
-
 /* --- choices, and the moment it turns ---------------------------------- */
 
 .choice {
@@ -1466,7 +1562,6 @@ label {
 .whowas .bottag {
   margin-left: 0.4rem;
 }
-
 
 /* --- looking at a card closely ------------------------------------------ */
 

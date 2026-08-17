@@ -1,6 +1,6 @@
 import type { GameState, Command, PlayerId } from './state';
 import { card, SIGN_IDS } from '../content/cards';
-import { canPay, shuttered } from './effects';
+import { canPay, shuttered, opsFor } from './effects';
 
 // `shuttered` lives in effects.ts now, because the `shutter` OP needs it and
 // effects.ts cannot import from legal.ts. Re-exported so every existing import
@@ -32,10 +32,25 @@ export function legalCommands(s: GameState, pid: PlayerId): Command[] {
   const hasAction = s.actionsLeft > 0;
 
   for (const ci of p.hand) {
-    // A shuttered type is not offered. Enforced here rather than in `apply` so
-    // a client can draw the card as unplayable — finding out by having a
-    // command rejected is the interface explaining the rules after the fact.
-    if (hasAction && !shuttered(s, card(ci.cardId).type)) {
+    /*
+      A shuttered type is not offered. Enforced here rather than in `apply` so
+      a client can draw the card as unplayable — finding out by having a
+      command rejected is the interface explaining the rules after the fact.
+
+      Nor is a card with nothing to do. A Saddlebag played is an action spent
+      to move a card from one pile to another, and offering it made the Street
+      a legal drop target for a card that cannot affect the Street. Six cards
+      are inert this way: saddlebag, grubstake, hard-tack, bank-draft, the
+      Scar, and last-words — whose effect fires from the deck when you would
+      fall, never from being played.
+
+      Here rather than in the client, because `legalCommands` is the single
+      source of truth for what is possible: blocking the drop in React would
+      leave `apply` still accepting it, which is the drift tech-spec.md §4
+      exists to prevent.
+    */
+    const does = opsFor(card(ci.cardId), ci.fevered).length > 0;
+    if (hasAction && does && !shuttered(s, card(ci.cardId).type)) {
       out.push({ t: 'PLAY_CARD', uid: ci.uid });
     }
     /*

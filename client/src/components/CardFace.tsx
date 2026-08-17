@@ -1,7 +1,12 @@
 import { Icon, type IconName } from "./Icon";
 import {
-  wrapToWidth, titleFont, SERIF,
-  TITLE_X, TITLE_FIRST, TITLE_REST, TITLE_TOP,
+  wrapToWidth,
+  titleFont,
+  SERIF,
+  TITLE_X,
+  TITLE_FIRST,
+  TITLE_REST,
+  TITLE_TOP,
 } from "./wrapText";
 import { PALETTE, DREAD, DREAD_ON_DARK, FAINT_OPACITY } from "./palette";
 import type { CardKind } from "./palette";
@@ -32,6 +37,13 @@ export interface CardFaceProps {
   title: string;
   /** Fevered cards show what they used to be. */
   subtitle?: string;
+  /**
+   * Kept on the interface, unused on the face.
+   *
+   * The ring that drew it is gone — the price lives on the Buy control now,
+   * where the decision is. Left declared so `faceOf` keeps compiling and so
+   * putting it back is one block rather than a hunt.
+   */
   cost?: number;
   /** Coin value when spent. */
   value?: number;
@@ -73,10 +85,24 @@ const DIVIDER_Y = 226;
  * the text that disagreed with it.
  */
 const CENTRE = W / 2;
-const ART = 82;
+/**
+ * The field illustration, and where it sits.
+ *
+ * 82 for a long time, which left the panel obviously under-used: the band runs
+ * from about y=95 (under the title) to the divider at 226, and an 82-unit
+ * square riding at y=107 used two thirds of it and sat high in what was left.
+ *
+ * 110 at y=96 fills the band and centres in it — 20 units clear above the
+ * divider, and x 70..180, which stays wide of the left strip.
+ *
+ * This sizes EVERY card's field, not just the ones with artwork, so the
+ * placeholder family marks grew with it. That is deliberate: a 24-unit line
+ * drawing scaled to 110 is coarse, and looking coarse is the right pressure —
+ * it is a placeholder, and it should read as one until the art arrives.
+ */
+const ART = 110;
+const ART_Y = 96;
 const FLAVOUR_ALONE = 280;
-
-
 
 /**
  * Headings are small caps with tracking, not uppercase.
@@ -94,7 +120,6 @@ export function CardFace({
   kind,
   title,
   subtitle,
-  cost,
   value,
   body,
   flavour,
@@ -149,8 +174,8 @@ export function CardFace({
     : DIVIDER_Y;
   const flavourBaseline = bodyLines.length ? H - FLAVOUR_BOTTOM : FLAVOUR_ALONE;
   const flavourTop = flavourBaseline - (flavourLines.length - 1) * FLAVOUR_LEAD;
-  const showFlavour = flavourLines.length > 0
-    && flavourTop - bodyBottom >= FLAVOUR_LEAD;
+  const showFlavour =
+    flavourLines.length > 0 && flavourTop - bodyBottom >= FLAVOUR_LEAD;
 
   const family: IconName = isMark ? (fever ? "fevered" : "sign") : mark;
   const field: IconName = art ?? (isMark ? family : mark);
@@ -169,7 +194,6 @@ export function CardFace({
     y += h;
     return at;
   };
-  const costY = cost !== undefined ? slot(40) : 0;
   // No family mark in the strip any more: the field art in the middle of the
   // card is the same glyph four times the size. Two of them said one thing
   // twice, and the strip can give those 32 units to the numbers instead.
@@ -257,27 +281,18 @@ export function CardFace({
         opacity={0.55}
       />
 
-      {cost !== undefined && (
-        <>
-          <circle
-            cx={28}
-            cy={costY + 14}
-            r={14}
-            fill="none"
-            stroke={ink}
-            strokeWidth={1.4}
-          />
-          <text
-            x={28}
-            y={costY + 20}
-            textAnchor="middle"
-            fill={ink}
-            style={{ font: `bold 17px ${SERIF}` }}
-          >
-            {cost}
-          </text>
-        </>
-      )}
+      {/*
+        No cost ring on the face.
+
+        The price only matters at the one moment you are deciding whether to
+        buy, and the Buy control says it there — "Buy for 4". On the card it
+        was a number in a circle competing with the Clear and Menace pips for
+        the same corner, on every copy of the card for the rest of the game,
+        long after the purchase was made and the number meant nothing.
+
+        `costY` still reserves the slot, so the strip below it lands where it
+        always did.
+      */}
 
       {clear !== undefined && (
         <>
@@ -380,8 +395,11 @@ export function CardFace({
           No frame around it. The card already carries a border, an inner rule
           and a divider; a fourth box drawn around the single illustration read
           as a placeholder waiting for art rather than as the art itself. */}
-      <g transform={`translate(${CENTRE - ART / 2} 107)`} style={{ color: accent }}>
-        <Icon name={field} size={82} strokeWidth={1.9} />
+      <g
+        transform={`translate(${CENTRE - ART / 2} ${ART_Y})`}
+        style={{ color: accent }}
+      >
+        <Icon name={field} size={120} strokeWidth={1.9} />
       </g>
 
       <line

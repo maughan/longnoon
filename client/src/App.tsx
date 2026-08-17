@@ -22,13 +22,15 @@ import { useNet, roomFor, type Net } from "./net";
 import { GLOSSARY, Rules, Term, Tooltips } from "./glossary";
 import { describeOps, cardKeywords, thirdLine } from "./cardText";
 import { nameOf as whoIs, type Beat } from "./beats";
-import { Icon, type IconName } from "./components/Icon";
+import { Icon, hasArt, type IconName } from "./components/Icon";
 import {
   CardFace,
   type CardFaceProps,
   type CardKind,
 } from "./components/CardFace";
-import cardBack from "./components/images/card-back.svg";
+import cardBack from "./components/images/cardback.png";
+import streetSign from "./components/images/street-sign.png";
+import streetSignActII from "./components/images/street-sign-act-2.png";
 import { Dusk } from "./components/Dusk";
 import { Turning } from "./components/Turning";
 import { createCoinPool, type CoinPool } from "./coinPool";
@@ -440,7 +442,9 @@ function Game({ net }: { net: Net }) {
 
       <div className="felt">
         <div
-          className={`centre ${drag?.play ? "takes" : ""}`}
+          className={`centre ${v.act === "mythos" ? "mythos" : ""} ${
+            drag?.play ? "takes" : ""
+          }`}
           onDragOver={drag?.play ? (e) => e.preventDefault() : undefined}
           onDrop={
             drag?.play
@@ -528,9 +532,12 @@ function Game({ net }: { net: Net }) {
                     actions={[]}
                     onPlay={() => resolve(o.key)}
                     onPick={() => resolve(o.key)}
-                    onZoom={() => setZoom({
-                      def: card(o.key), fevered: v.act === "mythos",
-                    })}
+                    onZoom={() =>
+                      setZoom({
+                        def: card(o.key),
+                        fevered: v.act === "mythos",
+                      })
+                    }
                   />
                 ))}
               </div>
@@ -1119,6 +1126,13 @@ function TopBar({
   dev: boolean;
   onAct: (action: "turning" | "restart") => void;
 }) {
+  /*
+    Held, not removed. The dev act-controls below are commented out at the
+    moment; the props stay so uncommenting the block is the only edit needed,
+    and `noUnusedLocals` does not fail the build in the meantime.
+  */
+  void dev;
+  void onAct;
   const me = v.you!;
   return (
     <header className="bar">
@@ -1164,13 +1178,10 @@ function TopBar({
       )}
 
       <div className="self">
-        <span className="coin">
+        {/* <span className="coin">
           <Icon name="grit" size={17} />
           <b>{me.grit}</b> <Term k="grit" />
-        </span>
-        <span className="coin">
-          <b>{v.actionsLeft}</b> <span className="muted">actions</span>
-        </span>
+        </span> */}
         <span className={`turnflag ${yours ? "mine" : "busy"}`}>
           {v.winner
             ? "the game is over"
@@ -1180,7 +1191,7 @@ function TopBar({
                 ? "resolving"
                 : `${whoIs(v, v.activePlayer, me.id)}'s Turn`}
         </span>
-        {dev && (
+        {/* {dev && (
           // These change the game, and only exist when the server was started
           // with them on.
           <span className="devbox" title="Development tools">
@@ -1204,7 +1215,7 @@ so Act I means a new deal."
               </button>
             )}
           </span>
-        )}
+        )} */}
         <button
           className="pilebtn cog"
           onClick={onSettings}
@@ -1300,8 +1311,20 @@ function Street({
 }) {
   return (
     <section className="stage">
-      <h2>
-        <Icon name="street" size={15} /> The Street
+      {/*
+        A painted sign instead of an icon and a word.
+
+        Still an <h2> with the words in `alt`: it is the heading for this region
+        of the board, and a screen reader should still hear "The Street" — an
+        image swap should not cost the structure. The act picks the sign, the
+        same way it picks the ground underneath it.
+      */}
+      <h2 className="streetsign">
+        <img
+          src={v.act === "mythos" ? streetSignActII : streetSign}
+          alt="The Street"
+          draggable={false}
+        />
       </h2>
       <div className="street">
         {v.street.map((slot, i) => {
@@ -1469,20 +1492,40 @@ function MarketPanel({
         <div className="shelf">
           {ids.map((id, i) => {
             const buy = buys.find((c) => c.t === "BUY" && c.cardId === id);
+            const price = card(id).cost;
             return (
-              <PlayCard
-                key={`${id}-${i}`}
-                def={card(id)}
-                fevered={fevered && card(id).type === "sign"}
-                dim={!buy}
-                actions={buy ? [{ cmd: buy, label: "Buy" }] : []}
-                onPlay={onPlay}
-                onPick={buy ? () => onPlay(buy) : undefined}
-                onZoom={() =>
-                  onZoom(card(id), fevered && card(id).type === "sign")
-                }
-                market
-              />
+              /*
+                The price sits under the card, on the shelf only.
+
+                It used to be a ring on the face, which meant every copy of the
+                card carried its purchase price for the rest of the game, long
+                after it meant anything. But the Buy control only exists when
+                you can AFFORD the card — so with the ring gone, a card just
+                out of reach showed no price at all, which is the one moment
+                the number matters most.
+
+                `afford` rather than hiding it: the gap between what you have
+                and what it costs is the decision.
+              */
+              <div className="shelfitem" key={`${id}-${i}`}>
+                <PlayCard
+                  def={card(id)}
+                  fevered={fevered && card(id).type === "sign"}
+                  dim={!buy}
+                  actions={buy ? [{ cmd: buy, label: labelFor(buy) }] : []}
+                  onPlay={onPlay}
+                  onPick={buy ? () => onPlay(buy) : undefined}
+                  onZoom={() =>
+                    onZoom(card(id), fevered && card(id).type === "sign")
+                  }
+                  market
+                />
+                {price !== undefined && (
+                  <span className={`price ${buy ? "afford" : ""}`}>
+                    <Icon name="grit" size={12} /> {price}
+                  </span>
+                )}
+              </div>
             );
           })}
           {!ids.length && <span className="muted">the shelves are bare</span>}
@@ -1534,7 +1577,7 @@ function Posse({
                     Vessel now, so the separate "the Vessel" chip that used to
                     sit beside `oldOne` is gone. */}
                 {o.status !== "posse" && <StatusChip status={o.status} />}
-                {o.role === "marked" && (
+                {o.role === "marked" && o.status !== "vessel" && (
                   <span className="chip sign">
                     <Icon name="marked" size={12} /> Marked
                   </span>
@@ -1786,6 +1829,9 @@ function Hand({
         {/* <button className={buyable ? "primary" : ""} onClick={onMarket}>
           Market{buyable ? ` · ${buyable} affordable` : ""}
         </button> */}
+        <span className="coin">
+          <b>{v.actionsLeft}</b> <span className="muted">actions</span>
+        </span>
         {loose.map((c, i) => (
           <button
             key={i}
@@ -1835,6 +1881,7 @@ function Hand({
                   def={card(ci.cardId)}
                   fevered={ci.fevered}
                   dim={!yours}
+                  shut={shutFor(v, card(ci.cardId).type)}
                   actions={(byUid.get(ci.uid) ?? []).map((cmd) => ({
                     cmd,
                     label: labelFor(cmd),
@@ -2192,12 +2239,25 @@ function dragOf(ci: CardInstance, byUid: Map<string, Command[]>): Drag {
  * handlers. Everything interactive lives out here, which is what lets the same
  * drawing serve a hand, a shelf, a Street slot and a discard pile.
  */
+/**
+ * Is this card type shut, and for how much longer?
+ *
+ * Returns the rounds remaining, so the cue can say WHEN rather than just that
+ * something is wrong — "shut, 1 more round" is a plan; "shut" is a mystery.
+ */
+function shutFor(v: ClientState, type: Card["type"]): number {
+  const s = v.shuttered;
+  if (!s || s.type !== type || v.round > s.untilRound) return 0;
+  return s.untilRound - v.round + 1;
+}
+
 function PlayCard({
   def,
   fevered,
   actions,
   onPlay,
   dim,
+  shut = 0,
   market,
   width,
   drag,
@@ -2211,6 +2271,8 @@ function PlayCard({
   actions: { cmd: Command; label: ReactNode }[];
   onPlay: (c: Command) => void;
   dim?: boolean;
+  /** Rounds this card's type stays shut. 0 when it is playable. */
+  shut?: number;
   market?: boolean;
   width?: number;
   /** Present for a card in your hand: what it can do, and where it may go. */
@@ -2230,6 +2292,8 @@ function PlayCard({
 }) {
   const playable = actions.length > 0;
   const canDrag = !!drag && (!!drag.play || !!drag.cash);
+  // Held for when the buttons come back — see the note further down.
+  void onPlay;
   return (
     <div
       className={[
@@ -2238,11 +2302,23 @@ function PlayCard({
         fevered ? "fevered" : "",
         playable ? "playable" : "",
         dim ? "spent" : "",
+        shut ? "shut" : "",
         canDrag ? "draggable" : "",
         onPick ? "pickable" : "",
       ]
         .filter(Boolean)
         .join(" ")}
+      /*
+        A shut card says so on its face.
+
+        Without this it simply lost its Play button, which reads as a bug
+        rather than as a rule — the player is looking at a card they know they
+        can play and no way to play it. The band names the card that did it and
+        counts the rounds down, because "shut" alone is a mystery and "1 more
+        round" is a plan.
+      */
+      title={shut ? `Not That One — shut for ${shut} more round${
+        shut === 1 ? "" : "s"}` : undefined}
       role={onPick ? "button" : undefined}
       tabIndex={onPick ? 0 : undefined}
       onClick={onPick}
@@ -2267,6 +2343,11 @@ function PlayCard({
       onDragEnd={canDrag ? () => onDrag?.(null) : undefined}
     >
       <CardFace {...faceOf(def, fevered, { market })} width={width ?? 120} />
+      {shut > 0 && (
+        <span className="shutband">
+          <Icon name="fevered" size={11} /> shut · {shut}
+        </span>
+      )}
       {onZoom && (
         <button
           className="lens"
@@ -2280,18 +2361,19 @@ function PlayCard({
           <LensMark />
         </button>
       )}
-      {/* Buttons are the keyboard path, not the mouse one: hidden until the
-       * card is focused, so tabbing still reaches every move while a pointer
-       * user gets an uncluttered card to drag. */}
-      {playable && (
-        <div className="acts">
-          {actions.map((a, i) => (
-            <button key={i} onClick={() => onPlay(a.cmd)}>
-              {a.label}
-            </button>
-          ))}
-        </div>
-      )}
+      {/*
+        No action buttons on the card.
+
+        They were the KEYBOARD path — hidden until the card was focused, so
+        tabbing reached every move while a pointer user got a clean card to
+        drag. Removed on request: there is no keyboard route to playing,
+        buying or cashing in a card any more, and a tab-only player cannot
+        take a turn.
+
+        `actions` still arrives and still drives the `playable` class and the
+        drag payload, so putting the block back is this comment's worth of
+        JSX and nothing else.
+      */}
     </div>
   );
 }
@@ -2734,7 +2816,22 @@ function faceOf(
         ? `At the Turning: ${def.fevered.name} — ${describeOps(opsFor(def, true))}`
         : def.flavour,
     footer: FAMILY[def.type],
+    /*
+      The family mark in the strip, the card's OWN art in the field.
+
+      Two different jobs. The strip mark is a family signal — the eye should
+      sort Kit from Sign from Threat across a Street without reading anything —
+      so it stays a glyph, inherits `currentColor`, and dims with its card. The
+      field is where an illustration belongs, and `field` defaults to `mark`
+      when a card has none.
+
+      `hasArt` rather than a list: only the client can see the images folder, so
+      this is the one place that knows both the card and what art exists.
+      `art` is left UNDEFINED when there is none, and CardFace already falls
+      back to the family mark — no placeholder to pick here.
+    */
     mark: iconForCard(def, fevered),
+    ...(hasArt(def.id) ? { art: `art:${def.id}` as IconName } : {}),
     whispers: def.whispers,
     clear: opts.slot ? effectiveClear(opts.slot) : def.clear,
     menace: opts.slot
@@ -2769,12 +2866,16 @@ const FAMILY: Record<Card["type"], string> = {
 
 function labelFor(c: Command): ReactNode {
   switch (c.t) {
-    case "PLAY_CARD":
-      return "Play";
-    case "SPEND_GRIT":
-      return "Cash in";
-    case "BUY":
-      return "Buy";
+    // case "PLAY_CARD":
+    //   return "Play";
+    // case "SPEND_GRIT":
+    //   return "Cash in";
+    case "BUY": {
+      // The price belongs where the decision is. It used to live in a ring on
+      // the card face, where it sat for the rest of the game saying nothing.
+      const price = card(c.cardId).cost;
+      return price === undefined ? "Buy" : `Buy for ${price}`;
+    }
     case "END_TURN":
       return "End turn";
     case "PAY_TOLL":

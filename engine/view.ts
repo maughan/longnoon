@@ -1,4 +1,6 @@
-import type { GameState, PlayerId, CardInstance, Role, Status } from './state';
+import type {
+  GameState, PlayerId, CardInstance, Role, Status, CardType,
+} from './state';
 import { signsHeld, deckSize, doomForFill } from './effects';
 
 export interface OpponentView {
@@ -38,6 +40,17 @@ export interface ClientState {
    * thing the bar needs to say out loud.
    */
   nextFillDoom: number;
+  /**
+   * The card type the Vessel has closed off, and the round it reopens.
+   *
+   * Public — NOT THAT ONE is announced to the table — and shipped so the client
+   * can draw an affected card as unplayable. CLAUDE.md has always said the
+   * shutter is enforced in `legalCommands` "so a client can draw the card as
+   * unplayable instead of the player discovering it by rejection"; the
+   * enforcement shipped and this did not, so a card just lost its button with
+   * nothing to explain why.
+   */
+  shuttered: { type: CardType; untilRound: number } | null;
   doom: number;
   doomTarget: number;
   vessel: PlayerId | null;
@@ -125,6 +138,7 @@ export function playerView(s: GameState, viewer: PlayerId | 'spectator'): Client
     whispers: s.whispers, whisperThreshold: s.tuning.whisperThreshold,
     whisperFills: s.whisperFills,
     nextFillDoom: doomForFill(s, s.whisperFills + 1),
+    shuttered: s.shuttered,
     doom: s.doom, doomTarget: s.tuning.doomTarget,
     vessel: s.vessel, vesselDamage: s.vesselDamage,
     street: s.street,
