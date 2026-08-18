@@ -366,3 +366,77 @@ describe('Doom', () => {
     throw new Error('no Doom in a whole game');
   });
 });
+
+describe('the Colt, before and after', () => {
+  it('plays the clean shot, and the turned one once it has turned', async () => {
+    const s = await sounds();
+    s.hear([
+      { t: 'PLAYED', player: 'p0', cardId: 'colt', fevered: false },
+      { t: 'THREAT_CLEARED', slot: 0, cardId: 'barons-men' },
+    ], 'p0', 0.7, 5);
+    expect(played.at(-1)!.src).toContain('colt');
+    expect(played.at(-1)!.src).not.toContain('fevered');
+
+    s.hear([
+      { t: 'PLAYED', player: 'p0', cardId: 'colt', fevered: true },
+      { t: 'THREAT_CLEARED', slot: 1, cardId: 'rustlers' },
+    ], 'p0', 0.7, 5);
+    expect(played.at(-1)!.src).toContain('colt-fevered');
+  });
+
+  it('follows the card, not the act', async () => {
+    // A Colt handed over by A GIFT, FREELY GIVEN arrives Fevered before the
+    // Turning. The sound is keyed on the instance, so it is right there too.
+    const s = await sounds();
+    s.hear([
+      { t: 'PLAYED', player: 'p0', cardId: 'colt', fevered: true },
+      { t: 'THREAT_CLEARED', slot: 0, cardId: 'barons-men' },
+    ], 'p0', 0.7, 5);
+    expect(played.at(-1)!.src).toContain('colt-fevered');
+  });
+});
+
+describe('Dusk', () => {
+  it('calls the sun down when the phase turns', async () => {
+    const s = await sounds();
+    s.hear([{ t: 'PHASE', phase: 'dusk', round: 4 }], 'p0', 0.7, 5);
+    expect(played.some((p) => p.src.includes('dusk-call'))).toBe(true);
+  });
+
+  it('says nothing at Dawn', async () => {
+    const s = await sounds();
+    s.hear([{ t: 'PHASE', phase: 'dawn', round: 5 }], 'p0', 0.7, 5);
+    expect(played.filter((p) => p.src.includes('dusk-call'))).toHaveLength(0);
+  });
+
+  it('sounds the same for everyone — Dusk is nobody’s', async () => {
+    const s = await sounds();
+    s.hear([{ t: 'PHASE', phase: 'dusk', round: 4 }], 'p0', 0.7, 5);
+    const mine = played.at(-1)!.volume;
+    s.hear([{ t: 'PHASE', phase: 'dusk', round: 5 }], 'p3', 0.7, 5);
+    expect(played.at(-1)!.volume).toBe(mine);
+  });
+
+  it('reaches the speaker from a real game', async () => {
+    // The chain is engine -> server -> net -> hook, and it broke once already:
+    // the previous Dusk clip lived inside the animation component and went
+    // silently when the animation was removed.
+    const room = new GameRoom({
+      seed: 'dusk-real',
+      seats: [{ name: 'Ada', kind: 'bot' }, { name: 'Bell', kind: 'bot' },
+        { name: 'Cole', kind: 'bot' }],
+      marked: 0,
+    });
+    const s = await sounds();
+    for (let i = 0; i < 3000 && room.awaitingBot; i++) {
+      for (const u of room.stepBot() ?? []) {
+        if (u.seat !== 'p0') continue;
+        if (!u.events.some((e) => e.t === 'PHASE' && e.phase === 'dusk')) continue;
+        s.hear(u.events, 'p0', 0.7, 5);
+        expect(played.some((p) => p.src.includes('dusk-call'))).toBe(true);
+        return;
+      }
+    }
+    throw new Error('no Dusk in a whole game');
+  });
+});

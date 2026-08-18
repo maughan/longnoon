@@ -54,6 +54,15 @@ export interface ClientMsg {
   /** Deal. Every chair must be filled first. */
   begin: { marked: boolean };
   /**
+   * Shut the room down. **Host only.**
+   *
+   * Distinct from `leave`, which gives up one seat and leaves the table
+   * standing for everybody else. This ends it: every connection is told, the
+   * room is forgotten, and the tokens go with it so nobody can rejoin a game
+   * that is no longer there.
+   */
+  close: Record<never, never>;
+  /**
    * How fast the bots play. **Host only.**
    *
    * The one setting with an owner, and the exception narrows the ruling above
@@ -102,6 +111,14 @@ export interface ServerMsg {
     host: PlayerId | null;
     speed: Speed;
   };
+  /**
+   * The room is gone. Sent to everyone in it, once.
+   *
+   * Its own message rather than an `error`: being shown the door is not a
+   * failure, and a client that treated it as one would show a red box instead
+   * of taking you back to the menu.
+   */
+  closed: { reason: string };
   /**
    * The pacing changed, or the host did.
    *

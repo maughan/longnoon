@@ -173,13 +173,26 @@ export function cardKeywords(def: Card, fevered: boolean, slot?: StreetSlot): st
   if (def.toll?.length) { add("toll"); add("scars"); }
 
   // And whatever its own words invoke.
+  const threat = def.type === "trouble" || def.type === "mythos";
   for (const text of [
     describeOps(opsFor(def, fevered)),
     def.fevered ? describeOps(opsFor(def, true)) : "",
     def.bounty ? describeOps(def.bounty) : "",
     def.toll ? describeOps(def.toll) : "",
   ]) {
-    for (const k of keywordsIn(text)) add(k);
+    for (const k of keywordsIn(text)) {
+      /*
+        "Damage" means two different things and only one has an entry.
+
+        On your cards it is what you DEAL. On a Threat it is what you TAKE —
+        cards off your deck — and that is what the glossary explains. Linking
+        the word on a Threat card sent a player reading "2 damage" to a note
+        about losing their own cards, which is the opposite of what the number
+        in front of them meant.
+      */
+      if (threat && k === "damage") continue;
+      add(k);
+    }
   }
   return keys;
 }

@@ -562,3 +562,48 @@ describe('nothing lands behind an animation', () => {
       .toBe('Wait for the light to change');
   });
 });
+
+describe('closing the table', () => {
+  function seated2() {
+    const hub = new Hub({ newId: ids() });
+    const made = hub.handle('a', { t: 'create', seats: 3, seed: 'cls' }, 0);
+    const roomId = (made[0]!.msg as { roomId: string }).roomId;
+    hub.handle('a', { t: 'join', roomId, name: 'Ada' }, 0);
+    hub.handle('b', { t: 'join', roomId, name: 'Bo' }, 0);
+    return { hub, roomId };
+  }
+
+  it('tells everyone, then forgets the room', () => {
+    // Told BEFORE anything is deleted — once the room is gone so is the
+    // connection map, and there is nobody left to tell.
+    const { hub, roomId } = seated2();
+    const out = hub.handle('a', { t: 'close' }, 0);
+    expect(out.map((e) => e.conn).sort()).toEqual(['a', 'b']);
+    for (const e of out) expect(e.msg.t).toBe('closed');
+    expect(hub.room(roomId)).toBeUndefined();
+  });
+
+  it('refuses anyone who is not the host', () => {
+    const { hub, roomId } = seated2();
+    const out = hub.handle('b', { t: 'close' }, 0);
+    expect(out.map((e) => e.msg.t)).toEqual(['error']);
+    expect((out[0]!.msg as { message: string }).message)
+      .toBe('Only the host closes the room');
+    expect(hub.room(roomId), 'the table went anyway').toBeDefined();
+  });
+
+  it('leaves no seat anybody can reclaim', () => {
+    // The tokens go with the room, so a rejoin finds "No such room" rather
+    // than an empty chair at a game that has ended.
+    const { hub, roomId } = seated2();
+    hub.handle('a', { t: 'close' }, 0);
+    const back = hub.handle('c', { t: 'rejoin', roomId, token: 'id-0' }, 0);
+    expect(back.map((e) => e.msg.t)).toEqual(['error']);
+  });
+
+  it('is not what `leave` does — one seat, table stands', () => {
+    const { hub, roomId } = seated2();
+    hub.handle('a', { t: 'leave' }, 0);
+    expect(hub.room(roomId), 'leaving closed the table').toBeDefined();
+  });
+});

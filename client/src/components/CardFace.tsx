@@ -100,8 +100,8 @@ const CENTRE = W / 2;
  * drawing scaled to 110 is coarse, and looking coarse is the right pressure —
  * it is a placeholder, and it should read as one until the art arrives.
  */
-const ART = 110;
-const ART_Y = 96;
+const ART = 210;
+const ART_Y = 30;
 const FLAVOUR_ALONE = 280;
 
 /**
@@ -197,9 +197,18 @@ export function CardFace({
   // No family mark in the strip any more: the field art in the middle of the
   // card is the same glyph four times the size. Two of them said one thing
   // twice, and the strip can give those 32 units to the numbers instead.
+  /*
+    The strip entries these positioned are commented out at the moment. The
+    `slot` calls stay so the running cursor still advances — remove them and
+    whatever comes back lands somewhere else — and the values are voided rather
+    than deleted so restoring the markup is one block.
+  */
   const clearY = clear !== undefined ? slot(48) : 0;
   const menaceY = menace !== undefined ? slot(48) : 0;
   const whisperY = whispers > 0 ? slot(28 + whispers * 15) : 0;
+  void clearY;
+  void menaceY;
+  void whisperY;
 
   return (
     <svg
@@ -270,17 +279,6 @@ export function CardFace({
         </>
       )}
 
-      {/* the strip */}
-      <line
-        x1={47}
-        y1={22}
-        x2={47}
-        y2={H - 22}
-        stroke={accent}
-        strokeWidth={0.6}
-        opacity={0.55}
-      />
-
       {/*
         No cost ring on the face.
 
@@ -296,12 +294,12 @@ export function CardFace({
 
       {clear !== undefined && (
         <>
-          <g transform={`translate(17 ${clearY})`}>
-            <Icon name="clear" size={23} />
+          <g transform={`translate(10 ${300})`}>
+            <Icon name="clear" size={40} />
           </g>
           <text
-            x={28}
-            y={clearY + 40}
+            x={52}
+            y={325}
             textAnchor="middle"
             fill={ink}
             style={{ font: `bold 15px ${SERIF}` }}
@@ -312,12 +310,12 @@ export function CardFace({
       )}
       {menace !== undefined && (
         <>
-          <g transform={`translate(17 ${menaceY})`}>
-            <Icon name="menace" size={23} />
+          <g transform={`translate(204 ${305})`}>
+            <Icon name="menace" size={30} />
           </g>
           <text
-            x={28}
-            y={menaceY + 40}
+            x={202}
+            y={325}
             textAnchor="middle"
             fill={ink}
             style={{ font: `bold 15px ${SERIF}` }}
@@ -332,28 +330,28 @@ export function CardFace({
           which was its only job. */}
       {whispers > 0 && (
         <>
-          <g transform={`translate(18 ${whisperY})`} style={{ color: dread }}>
-            <Icon name="whisper" size={20} />
+          <g transform={`translate(210 308)`} style={{ color: dread }}>
+            <Icon name="whisper" size={24} />
           </g>
-          {Array.from({ length: whispers }, (_, i) => (
-            <circle
-              key={i}
-              cx={28}
-              cy={whisperY + 32 + i * 15}
-              r={4.6}
-              fill={dread}
-            />
-          ))}
+          <text
+            x={205}
+            y={H - 22}
+            textAnchor="middle"
+            fill={dread}
+            style={{ font: `bold 16px ${SERIF}` }}
+          >
+            {whispers}
+          </text>
         </>
       )}
 
-      {value !== undefined && (
+      {value !== undefined && value !== 0 && (
         <>
-          <g transform={`translate(17 ${H - 62})`}>
-            <Icon name="grit" size={23} />
+          <g transform={`translate(14 ${H - 44})`}>
+            <Icon name="grit" size={30} />
           </g>
           <text
-            x={28}
+            x={46}
             y={H - 22}
             textAnchor="middle"
             fill={ink}
@@ -378,8 +376,8 @@ export function CardFace({
       ))}
       {subtitle && (
         <text
-          x={58}
-          y={70}
+          x={30}
+          y={214}
           fill={ink}
           opacity={FAINT_OPACITY}
           style={{ font: `italic 9px ${SERIF}` }}
@@ -399,7 +397,7 @@ export function CardFace({
         transform={`translate(${CENTRE - ART / 2} ${ART_Y})`}
         style={{ color: accent }}
       >
-        <Icon name={field} size={120} strokeWidth={1.9} />
+        <Icon name={field} size={210} strokeWidth={1.9} />
       </g>
 
       <line

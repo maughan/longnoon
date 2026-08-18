@@ -243,6 +243,7 @@ export class Hub {
       case 'seat': return this.setSeat(conn, msg.index, msg.kind);
       case 'begin': return this.begin(conn, msg.marked, now);
       case 'speed': return this.setSpeed(conn, msg.value);
+      case 'close': return this.closeRoom(conn);
       default: return [err(conn, 'Unknown message')];
     }
   }
@@ -401,6 +402,34 @@ export class Hub {
     if (room.host !== session.seat) return [err(conn, 'Only the host sets the speed')];
     room.speed = value;
     return this.speedFor(room);
+  }
+
+  /**
+   * The host shuts the table down.
+   *
+   * Everyone is told before anything is deleted — once the room is gone the
+   * connection-to-seat map goes with it, and there is nobody left to tell.
+   *
+   * Tokens are dropped along with the room, so a reconnect finds "No such
+   * room" rather than an empty chair at a game that has ended. That is the
+   * same reason `leave` burns a token: a seat you gave up is not a seat you
+   * should silently reclaim.
+   */
+  private closeRoom(conn: string): Envelope[] {
+    const session = this.sessions.get(conn);
+    const room = session && this.rooms.get(session.roomId);
+    if (!room || !session) return [err(conn, 'Not seated')];
+    if (room.host !== session.seat) return [err(conn, 'Only the host closes the room')];
+
+    const out: Envelope[] = [...room.conns.values()].map((c) => ({
+      conn: c,
+      msg: { t: 'closed' as const, reason: 'The host closed the table' },
+    }));
+    for (const c of room.conns.values()) this.sessions.delete(c);
+    this.rooms.delete(room.id);
+    this.nextBotAt.delete(room.id);
+    this.lastActive.delete(room.id);
+    return out;
   }
 
   /** Tell everyone in the room the tempo, and whether they own it. */
@@ -721,6 +750,8 @@ function parse(raw: unknown): Inbound | null {
         && (m.kind === 'bot' || m.kind === 'open') ? (m as Inbound) : null;
     case 'begin':
       return typeof m.marked === 'boolean' ? (m as Inbound) : null;
+    case 'close':
+      return m as Inbound;
     case 'speed':
       // Checked against the literals rather than `typeof string`: this value
       // indexes SPEED, and an unknown key there is `undefined * a number`.

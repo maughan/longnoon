@@ -449,7 +449,7 @@ label {
   overflow: auto;
   /* The street, behind a custom property so the act can swap the picture
    * without every rule below repeating the whole layer stack. */
-  --street: url("./components/images/the-street.png");
+  --street: url("./components/images/the-street.webp");
   background-image:
     /* linear-gradient(#0b0a0cd9, #0b0a0cad 55%, #0b0a0ceb), */ var(
     --street
@@ -467,7 +467,7 @@ label {
  * scrim, sizing and scroll behaviour are inherited, so the two acts cannot
  * drift apart in anything else. */
 .centre.mythos {
-  --street: url("./components/images/the-street-act-2.png");
+  --street: url("./components/images/the-street-act-2.webp");
 }
 
 /* Prepended to the existing layers, not `background:` — the shorthand would
@@ -490,6 +490,18 @@ label {
   justify-items: center;
   width: 100%;
 }
+/* The Dusk picture, where the sun piece used to run. Sized by height so the
+ * artwork keeps its own proportions in both the sheet and the beat. */
+.duskart {
+  display: block;
+  width: 420px;
+  max-width: 100%;
+  height: auto;
+}
+.duskart.small {
+  width: 230px;
+}
+
 /* A shelf entry: the card, and what it costs.
  *
  * The price is dim by default and lit when you can afford it, so the shelf
@@ -771,6 +783,26 @@ label {
 .shelfcard:focus-visible {
   outline: 2px solid var(--edge-bright, #6b5490);
   outline-offset: 2px;
+}
+
+/* Quitting, in the settings sheet. Separated by a rule because it is the one
+ * control here that ends something. */
+.quitbox {
+  display: grid;
+  gap: 0.4rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--edge);
+}
+.quitbox .row {
+  display: flex;
+  gap: 0.4rem;
+}
+.quitbox .hint {
+  margin: 0;
+}
+.quitbox button.warn {
+  border-color: var(--blood);
+  color: var(--dread, #d98a7a);
 }
 
 /* Game speed, in the settings sheet. Host only — see server/protocol.ts. */

@@ -28,10 +28,10 @@ import {
   type CardFaceProps,
   type CardKind,
 } from "./components/CardFace";
-import cardBack from "./components/images/cardback.png";
-import streetSign from "./components/images/street-sign.png";
-import streetSignActII from "./components/images/street-sign-act-2.png";
-import { Dusk } from "./components/Dusk";
+import cardBack from "./components/images/cardback.webp";
+import duskArt from "./components/images/dusk.webp";
+import streetSign from "./components/images/street-sign.webp";
+import streetSignActII from "./components/images/street-sign-act-2.webp";
 import { Turning } from "./components/Turning";
 import { createCoinPool, type CoinPool } from "./coinPool";
 import {
@@ -610,12 +610,11 @@ function Game({ net }: { net: Net }) {
         </button>
       )}
 
-      <Announce beats={queue} sound={sound.effectsLevel} onDusk={onDusk} />
+      <Announce beats={queue} onDusk={onDusk} />
 
       {dusk && (
         <DuskSheet
           report={dusk}
-          volume={sound.effectsLevel}
           onClose={() => {
             setDusk(null);
             // Deal now, in front of them, rather than having dealt behind it.
@@ -640,6 +639,7 @@ function Game({ net }: { net: Net }) {
           speed={net.speed}
           isHost={net.isHost}
           onSpeed={(value) => net.send({ t: "speed", value })}
+          onQuit={() => (net.isHost ? net.close() : net.leave())}
           onClose={() => setSettings(false)}
         />
       )}
@@ -716,11 +716,9 @@ function Verdict({ v, bots }: { v: ClientState; bots: PlayerId[] }) {
  */
 function DuskSheet({
   report,
-  volume,
   onClose,
 }: {
   report: DuskReport;
-  volume: number;
   onClose: () => void;
 }) {
   useEffect(() => {
@@ -753,12 +751,16 @@ function DuskSheet({
     <div className="sheet dusksheet" onClick={onClose}>
       <div className="sheet-inner" onClick={(e) => e.stopPropagation()}>
         <div className="dusk-head">
-          <Dusk
-            round={report.round}
-            width={420}
-            duration={DUSK_MS}
-            volume={volume}
-          />
+          {/*
+            A picture, not a piece.
+
+            The animated sun and its one-shot clip are both gone — the sound
+            lived inside `Dusk.tsx`, so removing the component removed
+            `dusk.mp3` with it. The server still holds the table for `duskMs`
+            while this sheet is up, so the beat is the same length; 2.4s was
+            sized to an animation and a still may want less.
+          */}
+          <img className="duskart" src={duskArt} alt="" draggable={false} />
           <h1>Dusk</h1>
           <p className="muted">
             {report.quiet
@@ -814,25 +816,22 @@ function minHold(b: Beat, waiting: number): number {
   return waiting > 3 ? 1100 : 1400;
 }
 
-/** Must match `duration` in components/styles/Dusk.css. */
-const DUSK_MS = 2400;
 /**
  * How long the Dusk beat stays up.
  *
- * Longer than the arc, because dusk.mp3 runs 3.19s and the sun landing in
- * silence with the last of the sound cut off is worse than a moment's hold.
- * Raising this means raising `duskMs` in server/hub.ts to match, or the bots
- * start moving again underneath it.
+ * It was 3400 to outlast `dusk.mp3` (3.19s) — sound and animation are both
+ * gone now, so the only thing this has to be is long enough to read. Kept as
+ * it was rather than guessed downward: `server/hub.ts`'s `duskMs` holds the
+ * whole table for 2400ms, and these two have to be considered together or the
+ * bots start moving underneath the sheet.
  */
 const DUSK_HOLD = 3400;
 
 function Announce({
   beats,
-  sound,
   onDusk,
 }: {
   beats: Beat[];
-  sound: number;
   onDusk: (on: boolean) => void;
 }) {
   const [at, setAt] = useState(0);
@@ -890,10 +889,11 @@ function Announce({
   return (
     <div className={`beat ${now.kind}`} key={now.id} aria-live="polite">
       {now.kind === "dusk" ? (
-        // No onSettled: the engine resolved Dusk before this ever arrived. The
-        // sun is reporting what happened, not gating it — a client that held
-        // the rules back on an animation would be a client with rules in it.
-        <Dusk round={now.id} width={230} duration={DUSK_MS} volume={sound} />
+        // Reporting what happened, not gating it — a client that held the
+        // rules back on an animation would be a client with rules in it. That
+        // was true of the piece this replaces and is trivially true of a
+        // still.
+        <img className="duskart small" src={duskArt} alt="" draggable={false} />
       ) : (
         now.icon && <Icon name={now.icon} size={26} className="beatmark" />
       )}
@@ -1829,9 +1829,20 @@ function Hand({
         {/* <button className={buyable ? "primary" : ""} onClick={onMarket}>
           Market{buyable ? ` · ${buyable} affordable` : ""}
         </button> */}
-        <span className="coin">
-          <b>{v.actionsLeft}</b> <span className="muted">actions</span>
-        </span>
+        {/*
+          Only while the turn is yours.
+
+          `actionsLeft` belongs to whoever is ACTING, so on somebody else's turn
+          this was reporting their remaining actions in your hand area, counting
+          down as they played. Tested on `activePlayer` rather than on `yours`
+          (which means "you have legal moves"): mid-resolution you can hold the
+          turn with nothing legal, and the count is still yours and still true.
+        */}
+        {v.activePlayer === me.id && (
+          <span className="coin">
+            <b>{v.actionsLeft}</b> <span className="muted">actions</span>
+          </span>
+        )}
         {loose.map((c, i) => (
           <button
             key={i}
@@ -2317,8 +2328,11 @@ function PlayCard({
         counts the rounds down, because "shut" alone is a mystery and "1 more
         round" is a plan.
       */
-      title={shut ? `Not That One — shut for ${shut} more round${
-        shut === 1 ? "" : "s"}` : undefined}
+      title={
+        shut
+          ? `Not That One — shut for ${shut} more round${shut === 1 ? "" : "s"}`
+          : undefined
+      }
       role={onPick ? "button" : undefined}
       tabIndex={onPick ? 0 : undefined}
       onClick={onPick}
@@ -2482,15 +2496,6 @@ function CardZoom({
               {...faceOf(def, fevered, { slot, omenMenace })}
               width={330}
             />
-            {slot && (
-              <p className="muted">
-                Standing in the Street: {slot.damage} damage taken
-                {slot.escalation > 0 &&
-                  `, and worse by ${slot.escalation} for
-                  every Dusk it has survived`}
-                .
-              </p>
-            )}
           </div>
 
           <div className="zoom-terms">
@@ -2604,6 +2609,7 @@ function SettingsPanel({
   speed,
   isHost,
   onSpeed,
+  onQuit,
   onClose,
 }: {
   s: SoundSettings;
@@ -2611,8 +2617,11 @@ function SettingsPanel({
   /** Only the host sees the pacing control — see `server/protocol.ts`. */
   isHost: boolean;
   onSpeed: (value: Speed) => void;
+  /** Leave, or — if you are the host — end the table for everyone. */
+  onQuit: () => void;
   onClose: () => void;
 }) {
+  const [confirming, setConfirming] = useState(false);
   // The effects slider still plays a coin as you let go of it — a level is
   // easier to judge by ear than by number. The row of "hear one" buttons that
   // used to sit below is gone.
@@ -2675,6 +2684,36 @@ function SettingsPanel({
             Absent rather than disabled for the rest of the table: a greyed
             button invites a conversation about why it is grey.
           */}
+          {/*
+            Quitting, behind a confirmation.
+
+            The two outcomes are very different and the button has to say
+            which: a player walks away and their seat waits for them, a host
+            ends the game for four other people. Same control, different
+            sentence, and neither happens on one click.
+          */}
+          <div className="quitbox">
+            {confirming ? (
+              <>
+                <p className="hint">
+                  {isHost
+                    ? "This closes the table. Everyone is sent back to the menu and the game ends."
+                    : "You will go back to the menu. Your seat is held while the table decides whether to wait for you."}
+                </p>
+                <div className="row">
+                  <button className="warn" onClick={onQuit}>
+                    {isHost ? "Close the table" : "Leave the table"}
+                  </button>
+                  <button onClick={() => setConfirming(false)}>Stay</button>
+                </div>
+              </>
+            ) : (
+              <button onClick={() => setConfirming(true)}>
+                {isHost ? "Close the table" : "Leave the table"}
+              </button>
+            )}
+          </div>
+
           {isHost && (
             <div className="speedpick">
               <span className="name">Game speed</span>

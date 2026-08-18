@@ -418,6 +418,68 @@ function fallenMove(view: ClientState, legal: Command[]): Command {
  * that is the point of the change rather than a side effect of it.
  */
 
+/**
+ * The Marked player, once the mask is off.
+ *
+ * **They win if and only if the Old One's side does**, and until now they were
+ * driven by the shared posse logic — which in Act II hunts the Vessel with
+ * every Vessel-facing card in hand. The traitor was playing to lose, in every
+ * game the simulator has ever run with one.
+ *
+ * The cause was a rule that is right for a different reason: CLAUDE.md
+ * requires policies to differ only in `pick` and `playsSign`, so that threat
+ * handling cannot confound the Puritan-vs-Zealot headline. That rule is about
+ * POSSE policies. The traitor is not one, and nothing noticed.
+ *
+ * What they do here is the mirror of the posse's Act II:
+ *
+ *   - never aim at the Vessel. Burying it is losing.
+ *   - play Signs for the Whispers. The track feeds Doom now, and Doom is how
+ *     their side wins — this is the same "encourage" gesture as Act I, and it
+ *     still looks like enthusiasm rather than sabotage.
+ *   - do NOT clear Threats. A Threat left standing menaces the posse and ticks
+ *     Doom at Dusk. Sitting still is a real move for this seat.
+ *   - keep buying Signs, which in Act II feeds the track directly.
+ *
+ * Deliberately not "attack the posse": a traitor who starts shooting allies is
+ * a traitor everyone can see, and the design is that encouragement is
+ * indistinguishable from playing well.
+ */
+function markedMove(
+  view: ClientState, legal: Command[], policy: BuyPolicy, rand: () => number,
+): Command {
+  const you = view.you!;
+  const play = (uid: string) =>
+    legal.find((c) => c.t === 'PLAY_CARD' && c.uid === uid);
+
+  // Anything that would wound the Vessel is off the table, whatever else it does.
+  const safe = you.hand.filter((ci) => vesselDamageOf(ci) === 0 && !selfHarming(ci));
+
+  // Whispers first: the track is the clock their side wins on.
+  const loud = safe
+    .filter((ci) => (card(ci.cardId).whispers ?? 0) > 0)
+    .sort((a, b) => (card(b.cardId).whispers ?? 0) - (card(a.cardId).whispers ?? 0))[0];
+  if (loud) {
+    const cmd = play(loud.uid);
+    if (cmd) return cmd;
+  }
+
+  // Then buy — Signs bought in Act II feed the track too.
+  const spendable = you.hand.filter((ci) => card(ci.cardId).grit > 0);
+  const budget = you.grit + spendable.reduce((n, ci) => n + card(ci.cardId).grit, 0);
+  const target = policy.pick(view, budget, rand);
+  if (target) {
+    const buy = legal.find((c) => c.t === 'BUY' && c.cardId === target);
+    if (buy) return buy;
+    const best = spendable.sort((a, b) => card(b.cardId).grit - card(a.cardId).grit)[0];
+    const spend = best && legal.find((c) => c.t === 'SPEND_GRIT' && c.uids[0] === best.uid);
+    if (spend) return spend;
+  }
+
+  // Otherwise sit on it. Threats left standing are doing their work for them.
+  return endTurn(legal);
+}
+
 // ---------------------------------------------------------------- the bot
 
 export function makeBot(policy: BuyPolicy): Bot {
@@ -431,6 +493,14 @@ export function makeBot(policy: BuyPolicy): Bot {
       return fallenMove(view, legal);
     }
     if (view.actionsLeft <= 0) return endTurn(legal);
+
+    /*
+      The traitor, after the Turning. Their side is the Old One's, and the
+      shared logic below is written for people trying to bury the Vessel.
+    */
+    if (view.act === 'mythos' && you.role === 'marked' && you.status === 'posse') {
+      return markedMove(view, legal, policy, rand);
+    }
 
     /*
       The Vessel: play whatever is in hand.

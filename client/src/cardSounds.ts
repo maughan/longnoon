@@ -22,7 +22,11 @@ import dynamiteBlast from './components/audio/dynamite-blast.mp3';
 import dynamiteFevered from './components/audio/dynamite-fevered.mp3';
 import lanternC from './components/audio/lantern-c.mp3';
 import winchesterA from './components/audio/winchester-a.mp3';
+import scattergunA from './components/audio/scattergun-a.mp3';
+import coltA from './components/audio/colt.mp3';
+import coltFevered from './components/audio/colt-fevered.mp3';
 import doomBoom from './components/audio/doom-boom-big.mp3';
+import duskCall from './components/audio/dusk-call-b.mp3';
 
 interface Clip {
   src: string;
@@ -53,6 +57,30 @@ interface Clip {
 export const CLIPS: Record<string, Clip> = {
   'six-gun': {
     src: gunshotA,
+    gain: 0.85,
+    on: ['THREAT_DAMAGED', 'DAMAGED', 'VESSEL_DAMAGED'],
+  },
+  colt: {
+    src: coltA,
+    gain: 0.85,
+    /*
+      A second recording for the turned face, not a filter on the first.
+      Same gun, same shot — what changed is who pointed it.
+
+      Keyed on the INSTANCE being Fevered rather than on the act, which is the
+      same thing almost always and not quite: a Colt handed over by A GIFT,
+      FREELY GIVEN arrives Fevered before the Turning, and it should sound
+      like what it is.
+    */
+    fevered: { src: coltFevered, gain: 0.85 },
+    // `destroy`, so it lands on THREAT_CLEARED — there is no damage event to
+    // wait for, and firing on PLAYED would put the shot before the aim.
+    on: ['THREAT_CLEARED'],
+  },
+  scattergun: {
+    src: scattergunA,
+    // Level with the other two firearms. The recordings carry the difference
+    // between a pistol, a rifle and a scattergun; the mix does not.
     gain: 0.85,
     on: ['THREAT_DAMAGED', 'DAMAGED', 'VESSEL_DAMAGED'],
   },
@@ -132,6 +160,19 @@ const DEAL_HAND = { src: dealHand, gain: 0.55 };
  * that is happening to everybody.
  */
 const DOOM = { src: doomBoom, gain: 0.9 };
+
+/**
+ * The sun going down.
+ *
+ * Fired from the PHASE event rather than from the Dusk sheet, which is where
+ * the old clip lived — inside `Dusk.tsx`, so it went when the animation did.
+ * Here it belongs to the EVENT, which means it sounds whether or not that
+ * player has the report open, and it cannot be lost again by removing a
+ * component.
+ *
+ * Once per batch by construction: a round has exactly one Dusk.
+ */
+const DUSK = { src: duskCall, gain: 0.8 };
 
 const DISCARD_HAND = { src: discardA, gain: 0.45 };
 const DISCARD_ONE = { src: discardOneA, gain: 0.4 };
@@ -231,6 +272,11 @@ export function createCardSounds(): CardSounds {
       let doom = 0;
       for (const e of events) {
         if (e.t === 'DOOM') { doom += e.delta; continue; }
+        if (e.t === 'PHASE' && e.phase === 'dusk') {
+          // Not near/far: Dusk is the whole table's, like Doom.
+          fireClip(DUSK, level, true);
+          continue;
+        }
         if (e.t === 'DREW') {
           const near = e.player === seat;
           // Defended, because the failure mode is silence and silence is what

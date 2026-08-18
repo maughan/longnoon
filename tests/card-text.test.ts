@@ -188,9 +188,11 @@ describe('what "trash" actually does', () => {
   });
 
   it('explains both halves in one glossary entry', () => {
+    // Both rules, in a player's words rather than the engine's: which card
+    // goes when a card says "in hand", and that damage does not let you pick.
     const t = GLOSSARY.trash!;
     expect(t.long).toMatch(/leftmost/);
-    expect(t.long).toMatch(/top of your shuffled deck/);
+    expect(t.long).toMatch(/top of your deck/);
     expect(t.long).toMatch(/boneyard/);
   });
 });

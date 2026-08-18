@@ -15,171 +15,187 @@ export interface Entry {
 export const GLOSSARY: Record<string, Entry> = {
   grit: {
     term: 'Grit', also: ['grit'],
-    short: 'What you pay with — and it does not keep.',
-    long: 'There is no money card. To get Grit you cash a card IN: it goes to '
-      + 'your discard and you take its Grit value instead of playing it. So '
-      + 'every purchase costs you a card you could have used. Whatever Grit you '
-      + 'do not spend is gone at the end of your turn — it does not bank.',
+    short: 'What you buy with. It does not carry over.',
+    long: 'There is no money card. To get Grit, cash a card in: drag it to the '
+      + 'market and you take its Grit value instead of playing it. The card '
+      + 'goes to your discard, so you still own it — you just spent its turn. '
+      + 'Any Grit left at the end of your turn is lost, so spend it or do not '
+      + 'raise it.',
   },
   cost: {
     term: 'Cost', also: ['cost'],
-    short: 'Grit needed to buy this.',
-    long: 'Raise it by cashing in cards from your hand, then buy. Buying also '
-      + 'costs an action, and it is the only healing in the game — so what you '
-      + 'spend on is what keeps you standing.',
+    short: 'The Grit you need to buy a card.',
+    long: 'Cash cards in until you have enough, then buy. Buying costs one of '
+      + 'your three actions. Cashing in does not.',
   },
   action: {
     term: 'Action', also: ['action', 'actions'],
-    short: 'You get three a turn.',
-    long: 'An action is: play a card, buy a card, or deal damage. Cashing a card '
-      + 'in for Grit is free — it is the playing and buying that costs.',
+    short: 'You get three each turn.',
+    long: 'Playing a card costs an action, and so does buying one. Cashing a '
+      + 'card in for Grit is free — do as much of that as you like. When your '
+      + 'actions run out, end your turn.',
   },
   whispers: {
     term: 'Whispers', also: ['whisper', 'whispers'],
-    short: 'A shared bar. Fill it and something bad happens.',
-    long: 'Signs carry Whispers that fire when you PLAY them — never when you '
-      + 'buy them. They go on one bar shared by the whole table, so the cost '
-      + 'of your power is paid by everyone at it. Fill it in the Long Season '
-      + 'and the Turning comes, once. Fill it after that and Doom climbs, and '
-      + 'the bar starts again — and again. The Vessel can push it too: it '
-      + 'names a player, and their next purchase feeds the bar.',
+    short: 'One bar, shared by everyone. Filling it is bad.',
+    long: 'Signs have Whisper pips. You add them when you PLAY a Sign, never '
+      + 'when you buy one — so a Sign in your hand costs the table nothing '
+      + 'until you use it. The bar belongs to everybody, so your power is paid '
+      + 'for by the whole posse. Fill it before the Turning and the Turning '
+      + 'happens. Fill it afterwards and Doom climbs, then the bar empties and '
+      + 'starts again.',
   },
   turning: {
     term: 'The Turning', also: ['the turning', 'turning'],
-    short: 'Act I ends. Something wakes up.',
-    long: 'The player holding the most Signs becomes the Vessel and takes the '
-      + "Old One's side. Every Sign everywhere flips to its Fevered face, and "
-      + 'every Threat still standing in the Street flips to its reverse.',
+    short: 'The game changes sides halfway through.',
+    long: 'When the Whisper bar fills, whoever holds the most Signs becomes the '
+      + 'Vessel and starts playing against the rest of you. Every Sign anyone '
+      + 'owns flips to its Fevered face at the same moment, and Threats left '
+      + 'in the Street turn into something worse.',
   },
   signs: {
     term: 'Signs', also: ['sign', 'signs'],
-    short: 'Stronger than anything honest, and never sold out.',
-    long: 'Better per coin than Provisions and always available. They also carry '
-      + 'Whispers, cannot be trashed by damage, and flip to a Fevered face at '
-      + 'the Turning. Buying none is a losing line; buying only Signs is worse.',
+    short: 'The strong cards. Buying them is how you lose.',
+    long: 'Signs are better than Provisions and never run out of stock. They '
+      + 'also carry Whispers, they flip to a Fevered face at the Turning, and '
+      + 'whoever has the most of them becomes the Vessel. Damage takes your '
+      + 'other cards before it takes a Sign, so a corrupt deck is also a hard '
+      + 'one to kill. Buying none is a losing line. Buying only Signs is worse.',
   },
   fevered: {
     term: 'Fevered', also: ['fevered'],
-    short: 'Same power. No longer aimed by you.',
-    long: 'A Fevered card is not weaker — it usually does the same thing to a '
-      + 'target you no longer choose. Some of them turn on the Vessel, which is '
-      + 'the only way to bury it.',
+    short: 'The same card, aimed by something else.',
+    long: 'After the Turning every Sign shows its Fevered face. It is usually '
+      + 'just as strong — what you lose is the choice of target. A few of them '
+      + 'turn on the Vessel, and those are how you win.',
   },
   provisions: {
     term: 'Provisions', also: ['provision', 'provisions'],
-    short: 'Honest, weaker, and finite.',
-    long: 'A market deck that is never reshuffled. When it runs dry, healing '
-      + 'stops existing — because buying is healing.',
+    short: 'The honest cards. There are only so many.',
+    long: 'Weaker than Signs, and the market deck is never reshuffled. Once it '
+      + 'is empty there is nothing safe left to buy — and since buying is the '
+      + 'only way to add cards, it is the only way to heal.',
   },
   threat: {
     term: 'Threat', also: ['threat', 'threats'],
-    short: 'Trouble standing in the Street.',
-    long: 'Each has a Clear value (damage to remove it) and a Menace (damage it '
-      + 'deals at Dusk if you leave it). The Street holds three at a time; a '
-      + 'fourth arriving shoves the oldest out, resolving its Menace on the way.',
+    short: 'Trouble standing in the Street, waiting for Dusk.',
+    long: 'Every Threat shows a Clear value — the damage needed to remove it — '
+      + 'and a Menace — what it does to somebody at the end of the round. Leave '
+      + 'one standing and it gets harder: both numbers grow each Dusk it '
+      + 'survives. If the Street is full when another arrives, the oldest one '
+      + 'attacks, grows, and stays.',
   },
   clear: {
     term: 'Clear', also: ['clear'],
-    short: 'Damage needed to remove a Threat.',
-    long: 'In Act I, clearing a Threat pays a Bounty. In Act II nothing pays a '
-      + 'Bounty, ever — the same fights, the opposite arithmetic.',
+    short: 'The damage needed to remove a Threat.',
+    long: 'Damage adds up across turns, so a Threat you half-shot stays half '
+      + 'shot. Clearing one before the Turning pays a Bounty; afterwards it '
+      + 'pays nothing.',
   },
   menace: {
     term: 'Menace', also: ['menace'],
-    short: 'What it does to you at Dusk if it is still there.',
-    long: 'Menace lands on whoever holds the most Signs — corruption draws '
-      + 'attention — and the more Signs they hold, the deeper it cuts.',
+    short: 'What a Threat does to you at Dusk.',
+    long: 'At the end of every round each Threat still standing wounds one '
+      + 'player. It goes for whoever holds the most Signs, and the more they '
+      + 'hold the harder it hits. It never touches the Vessel.',
   },
   toll: {
     term: 'Toll', also: ['toll'],
-    short: 'What it costs to be rid of it, when damage cannot.',
-    long: 'Some Act II Threats have no Clear value — no amount of shooting '
-      + 'removes them. They have a price instead, paid with an action and '
-      + 'whatever the card asks. It is only offered when you can actually meet '
-      + 'it.',
+    short: 'A price you pay to remove a Threat you cannot shoot.',
+    long: 'Some Threats after the Turning have no Clear value, so no amount of '
+      + 'damage will move them. Instead they name a price — an action plus '
+      + 'whatever the card asks. You will only be offered it when you can '
+      + 'actually pay.',
   },
   bounty: {
     term: 'Bounty', also: ['bounty'],
-    short: 'What clearing a Threat pays, in Act I only.',
-    long: 'Act I combat is generative: you fight rustlers and winning pays. '
-      + 'After the Turning it pays nothing at all, and the floor drops out '
-      + 'without anyone explaining why.',
+    short: 'The reward for clearing a Threat, before the Turning only.',
+    long: 'Clear a Threat in the first half of the game and it pays you — Grit, '
+      + 'a free Provision, something. After the Turning nothing pays anything, '
+      + 'and every fight is pure survival.',
   },
   damage: {
     term: 'Damage', also: ['damage'],
-    short: 'You lose cards off your deck. There is no health bar.',
-    long: 'Damage takes cards off the TOP of your deck — you do not choose '
-      + 'which, and because the deck is shuffled you cannot know. It takes Kit '
-      + 'and Provisions before Signs, so a wounded player does not just get '
-      + 'weaker, they get more corrupt. Last Words is taken last of all. A thin '
-      + 'deck is a fragile one: chaff is armour here.',
+    short: 'When you take damage you lose cards. There is no health bar.',
+    long: 'Damage takes cards off the top of your deck and trashes them. You do '
+      + 'not choose which, and the deck is shuffled, so you cannot know what '
+      + 'you are about to lose. It takes your ordinary cards before it takes a '
+      + 'Sign. Run out of deck when you need to draw and you fall.',
   },
   trash: {
     term: 'Trash', also: ['trash', 'trashed', 'trashes', 'trashing'],
-    short: 'The card is gone for good, to the boneyard.',
-    long: 'Trashed cards go to the boneyard and never come back — there is no '
-      + 'other way to remove a card, which is why decks only ever grow. Where '
-      + 'the card comes from depends on the wording. "In hand" takes your '
-      + 'leftmost card that is not a Sign, so you can see it coming; damage '
-      + 'takes off the top of your shuffled deck, so you cannot. Signs are '
-      + 'never trashed while anything else remains, and a Scar cannot be '
-      + 'trashed at all.',
+    short: 'The card is gone for good.',
+    long: 'Trashed cards go to the boneyard and never come back. Nothing else '
+      + 'removes a card, so your deck only ever grows. When a card says "in '
+      + 'hand" it takes your leftmost card that is not a Sign, so you can see '
+      + 'which one is going; damage takes off the top of your deck, so you '
+      + 'cannot. A Scar can never be trashed.',
   },
   deck: {
     term: 'Your deck', also: ['deck'],
-    short: 'Your deck is your health.',
-    long: 'When it runs out at the moment you would draw, you fall. That is why '
-      + 'buying is healing and why trashing your own cards is a gamble rather '
-      + 'than an obvious good.',
+    short: 'Your deck is your life total.',
+    long: 'You fall when your deck runs out at the moment you would draw. That '
+      + 'is why buying cards keeps you alive, and why cheap useless cards are '
+      + 'still worth having — anything that soaks a hit is doing a job.',
   },
   omen: {
     term: 'Omen', also: ['omen', 'omens'],
-    short: 'Cannot be cleared. Just sits there.',
-    long: 'An Omen holds a Street slot for good, adds a Whisper every round, and '
-      + 'wipes out any progress toward burying the Vessel when it arrives. A '
-      + 'dead slot is fewer options for the posse, on purpose.',
+    short: 'A Threat that cannot be cleared.',
+    long: 'An Omen takes a Street slot and keeps it. No amount of damage moves '
+      + 'it, it adds a Whisper every round, and if one arrives it undoes any '
+      + 'damage already done to the Vessel. Dynamite is the only thing that '
+      + 'removes one, and it costs you a Scar.',
   },
   doom: {
     term: 'Doom', also: ['doom'],
-    short: "The Old One's clock, in Act II.",
-    long: 'It starts at the Turning and climbs every round. If it fills, the Old '
-      + 'One wins. Burying the Vessel first is the only way out.',
+    short: 'The clock that runs after the Turning.',
+    long: 'Doom starts when the Turning happens and climbs — a point for every '
+      + 'Threat you leave standing at Dusk, and a jump every time the Whisper '
+      + 'bar fills again. If Doom reaches the top, you have lost. Burying the '
+      + 'Vessel before it does is the only way out.',
   },
   vessel: {
     term: 'The Vessel', also: ['the vessel', 'vessel'],
-    short: 'The player it woke up inside.',
-    long: 'Bury them by dealing damage across any number of turns. Most cards '
-      + 'cannot be aimed at the Vessel — the ones that can are mostly Signs that '
-      + 'have turned.',
+    short: 'The player it woke up inside. Bury them to win.',
+    long: 'At the Turning the most corrupt player becomes the Vessel and plays '
+      + 'against you, with a deck of their own. You win by dealing enough '
+      + 'damage to them, added up over as many turns as it takes. Most cards '
+      + 'cannot be aimed at them — the ones that can are mostly your own Signs, '
+      + 'now Fevered.',
   },
   revenant: {
     term: 'Revenant', also: ['revenant', 'revenants'],
-    short: 'You fell. You did not leave.',
-    long: 'You keep every Sign, Fevered side up, and you win only if the Old One '
-      + 'wins. You cannot buy, and your deck loses a card every time it cycles — '
-      + 'strongest the moment you turn, weaker every round after.',
+    short: 'What you become when you fall. You are still playing.',
+    long: 'You keep your Signs, Fevered side up, and you now win with the '
+      + 'Vessel rather than the posse. You cannot buy anything, and your deck '
+      + 'loses a card each time it runs out — so you are at your strongest the '
+      + 'moment you fall and weaker every round after.',
   },
   scars: {
     term: 'Scars', also: ['scar', 'scars'],
-    short: 'Dead cards you can never remove.',
-    long: 'No Grit, no effect, permanent. The only purely bad card in the game.',
+    short: 'A dead card you are stuck with.',
+    long: 'No Grit, no effect, and nothing removes it. It sits in your deck '
+      + 'taking up a draw. Some prices are paid in Scars.',
   },
   boneyard: {
     term: 'Boneyard', also: ['boneyard'],
-    short: 'Trashed cards, face up, gone for good.',
-    long: 'Everyone can see it. It is the public record of what this has already '
-      + 'taken from you.',
+    short: 'Where trashed cards go. They do not come back.',
+    long: 'Face up, and everyone can look. It is the running record of what '
+      + 'this has cost you.',
   },
   dusk: {
     term: 'Dusk', also: ['dusk'],
-    short: 'End of the round, when the Street collects.',
-    long: 'Every unresolved Threat deals its Menace, Omens add their Whispers, '
-      + 'and the tracks are checked.',
+    short: 'The end of the round, when the Street collects.',
+    long: 'Every Threat still standing wounds somebody and gets harder. Omens '
+      + 'add their Whispers. After the Turning, each one left also adds Doom. '
+      + 'Then a new round begins and more Trouble arrives.',
   },
   marked: {
     term: 'The Marked', also: ['the marked', 'marked'],
-    short: 'One of you wins only if the Old One does.',
-    long: 'They do not sabotage. They encourage — and encouraging looks exactly '
+    short: 'One of you is secretly playing for the other side.',
+    long: 'At the start, one player is dealt the Marked role and tells nobody. '
+      + 'They win only if the posse loses. They cannot attack you — all they '
+      + 'can do is encourage, and buying Signs enthusiastically looks exactly '
       + 'like playing well.',
   },
 };

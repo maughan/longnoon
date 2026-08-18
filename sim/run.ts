@@ -55,6 +55,17 @@ export interface GameResult {
   vesselPlays: Record<string, number>;
   /** Fevered Signs the Vessel carried into Act II. */
   vesselSigns: number | null;
+  /**
+   * Did the traitor win?
+   *
+   * Null with no traitor at the table. The engine has no per-player win —
+   * `winner` is `'posse' | 'oldOne'` — so nothing recorded this, and every
+   * `--marked` run counted the Marked player as a posse member: a posse win
+   * was scored as a win for the one seat secretly hoping otherwise.
+   *
+   * They win if and only if the Old One's side does.
+   */
+  markedWon: boolean | null;
   vesselDamage: number;
   vesselPolicy: string | null;
   signsBought: number;
@@ -96,6 +107,7 @@ export function runGame(cfg: RunConfig): GameResult {
     whisperFills: 0,
     vesselPlays: {},
     vesselSigns: null,
+    markedWon: null,
     vesselDamage: 0,
     vesselPolicy: null,
     signsBought: 0,
@@ -151,6 +163,7 @@ export function runGame(cfg: RunConfig): GameResult {
     result.steps = steps;
     result.rounds = s.round;
     result.doom = s.doom;
+    if (marked !== null) result.markedWon = s.winner === 'oldOne';
     result.omensLeft = s.street
       .filter((sl) => sl && card(sl.instance.cardId).type === 'omen').length;
     result.whisperFills = s.whisperFills;

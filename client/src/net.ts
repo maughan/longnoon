@@ -58,6 +58,8 @@ export interface Net {
   play(command: Command): void;
   /** Give up the seat and return to the menu. */
   leave(): void;
+  /** Host only: end the table for everyone. */
+  close(): void;
   /** The room before the deal. Null once the game has begun. */
   table: { seats: TableSeat[]; canBegin: boolean } | null;
   setSeat(index: number, kind: 'bot' | 'open'): void;
@@ -147,6 +149,28 @@ export function useNet(target: NetTarget): Net {
       && sock.current.send(JSON.stringify(msg));
   }, []);
 
+  /**
+   * Back to the menu, whatever brought us here.
+   *
+   * One function for leaving and for being closed on, because the two used to
+   * be the same twelve lines and only one of them was maintained. Clears the
+   * token too: a seat you gave up, or a room that no longer exists, is not
+   * something a page reload should try to reclaim.
+   */
+  const toMenu = useCallback(() => {
+    localStorage.removeItem(TOKEN_KEY);
+    seatRef.current = null;
+    activeRef.current = null;
+    setSeat(null);
+    setView(null);
+    setLegal([]);
+    setLog([]);
+    setBeats([]);
+    setRoomId(null);
+    setTable(null);
+    setError(null);
+  }, []);
+
   useEffect(() => {
     /**
      * partysocket, not a bare WebSocket.
@@ -188,6 +212,11 @@ export function useNet(target: NetTarget): Net {
             TOKEN_KEY,
             JSON.stringify({ roomId: msg.roomId, token: msg.token }),
           );
+          break;
+        // Being shown the door is not an error — take the menu, quietly.
+        case 'closed':
+          toMenu();
+          setError(msg.reason);
           break;
         case 'table':
           setRoomId(msg.roomId);
@@ -278,17 +307,16 @@ export function useNet(target: NetTarget): Net {
       // Reset locally rather than waiting to be told. The server's answer to a
       // leave is silence — the seat is simply released — and a menu that waited
       // for a reply that never comes would hang on a dropped connection.
-      localStorage.removeItem(TOKEN_KEY);
-      seatRef.current = null;
-      activeRef.current = null;
-      setSeat(null);
-      setView(null);
-      setLegal([]);
-      setLog([]);
-      setBeats([]);
-      setRoomId(null);
-      setTable(null);
-      setError(null);
+      toMenu();
     },
+    /**
+     * Host only: end the table for everybody.
+     *
+     * The local reset waits for the server's `closed` here, unlike `leave` —
+     * the difference is that this one has an answer coming, and resetting
+     * first would leave the host on the menu while the table they were
+     * closing may not have heard.
+     */
+    close: () => send({ t: 'close' }),
   };
 }

@@ -33,7 +33,7 @@ export const TRACKING_EM = 0.07;
  * top-right corner of the card, from about x=215. The lines below them get the
  * full width back.
  */
-export const TITLE_X = 58;
+export const TITLE_X = 25;
 export const TITLE_FIRST = 207 - TITLE_X;
 export const TITLE_REST = 236 - TITLE_X;
 /** Baselines by line count, so one, two or three lines all sit correctly. */
@@ -43,16 +43,48 @@ export const CORNER_X = 215;
 
 /** Capital advance widths as a fraction of the font size, for a wide serif. */
 const CAP: Record<string, number> = {
-  A: 0.72, B: 0.68, C: 0.7, D: 0.75, E: 0.66, F: 0.61, G: 0.75, H: 0.77,
-  I: 0.38, J: 0.43, K: 0.73, L: 0.61, M: 0.95, N: 0.75, O: 0.77, P: 0.61,
-  Q: 0.77, R: 0.7, S: 0.6, T: 0.64, U: 0.75, V: 0.72, W: 1.02, X: 0.72,
-  Y: 0.68, Z: 0.62,
+  A: 0.72,
+  B: 0.68,
+  C: 0.7,
+  D: 0.75,
+  E: 0.66,
+  F: 0.61,
+  G: 0.75,
+  H: 0.77,
+  I: 0.38,
+  J: 0.43,
+  K: 0.73,
+  L: 0.61,
+  M: 0.95,
+  N: 0.75,
+  O: 0.77,
+  P: 0.61,
+  Q: 0.77,
+  R: 0.7,
+  S: 0.6,
+  T: 0.64,
+  U: 0.75,
+  V: 0.72,
+  W: 1.02,
+  X: 0.72,
+  Y: 0.68,
+  Z: 0.62,
 };
 const SMALL_CAP = 0.8;
 const DIGIT = 0.55;
 const PUNCT: Record<string, number> = {
-  ' ': 0.25, "'": 0.25, '’': 0.25, '-': 0.33, '—': 0.75, '.': 0.27,
-  ',': 0.27, '!': 0.33, '?': 0.5, ':': 0.27, ';': 0.27, '·': 0.33,
+  " ": 0.25,
+  "'": 0.25,
+  "’": 0.25,
+  "-": 0.33,
+  "—": 0.75,
+  ".": 0.27,
+  ",": 0.27,
+  "!": 0.33,
+  "?": 0.5,
+  ":": 0.27,
+  ";": 0.27,
+  "·": 0.33,
 };
 
 /** The font string a card title is drawn with, for measuring it. */
@@ -64,7 +96,10 @@ export const titleFont = (size: number) => `small-caps 600 ${size}px ${SERIF}`;
  * `undefined` means "not tried yet", `null` means "no DOM here" — the tests run
  * in Node and fall through to the estimate.
  */
-interface Ruler { font: string; measureText(t: string): { width: number } }
+interface Ruler {
+  font: string;
+  measureText(t: string): { width: number };
+}
 
 /**
  * Typed structurally rather than as a CanvasRenderingContext2D.
@@ -77,10 +112,14 @@ let ruler: Ruler | null | undefined;
 
 function measured(text: string, size: number, font: string): number | null {
   if (ruler === undefined) {
-    const doc = (globalThis as {
-      document?: { createElement(t: string): { getContext(c: string): Ruler | null } };
-    }).document;
-    ruler = doc ? doc.createElement('canvas').getContext('2d') : null;
+    const doc = (
+      globalThis as {
+        document?: {
+          createElement(t: string): { getContext(c: string): Ruler | null };
+        };
+      }
+    ).document;
+    ruler = doc ? doc.createElement("canvas").getContext("2d") : null;
   }
   if (!ruler) return null;
   ruler.font = font;
@@ -94,7 +133,7 @@ export function estimateWidth(text: string, size: number): number {
   for (const ch of text) {
     const upper = ch.toUpperCase();
     if (PUNCT[ch] !== undefined) em += PUNCT[ch]!;
-    else if (ch >= '0' && ch <= '9') em += DIGIT;
+    else if (ch >= "0" && ch <= "9") em += DIGIT;
     else if (CAP[upper] !== undefined) {
       // Every letter is a capital in small caps; the lowercase ones are smaller.
       em += CAP[upper]! * (ch === upper ? 1 : SMALL_CAP);
@@ -106,7 +145,9 @@ export function estimateWidth(text: string, size: number): number {
 
 /** Measured if a browser is here, estimated otherwise. */
 export function textWidth(text: string, size: number, font?: string): number {
-  return (font ? measured(text, size, font) : null) ?? estimateWidth(text, size);
+  return (
+    (font ? measured(text, size, font) : null) ?? estimateWidth(text, size)
+  );
 }
 
 /**
@@ -125,12 +166,18 @@ export function wrapToWidth(
   const limit = (i: number) => (i === 0 ? firstWidth : restWidth);
   const w = (t: string) => textWidth(t, size, font);
   const lines: string[] = [];
-  let cur = '';
+  let cur = "";
 
   for (const word of text.split(/\s+/).filter(Boolean)) {
     const next = cur ? `${cur} ${word}` : word;
-    if (w(next) <= limit(lines.length)) { cur = next; continue; }
-    if (cur) { lines.push(cur); cur = ''; }
+    if (w(next) <= limit(lines.length)) {
+      cur = next;
+      continue;
+    }
+    if (cur) {
+      lines.push(cur);
+      cur = "";
+    }
 
     let rest = word;
     while (w(rest) > limit(lines.length)) {
@@ -142,5 +189,5 @@ export function wrapToWidth(
     cur = rest;
   }
   if (cur) lines.push(cur);
-  return lines.length ? lines : [''];
+  return lines.length ? lines : [""];
 }

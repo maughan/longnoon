@@ -80,8 +80,16 @@ describe("the card that reported this", () => {
   it("keeps Cattle Baron's Men inside the card", () => {
     const name = "Cattle Baron's Men";
     const lines = wrapToWidth(name, 16, FIRST, REST);
-    // It does not fit on one line, and the fix is that we now know that.
-    expect(lines.length).toBe(2);
+    /*
+      Asserted on FIT, not on a line count.
+
+      This used to require exactly two lines, which was true when the title
+      started at x=58 beside the family strip. The strip is gone and titles now
+      start at x=25, so the same name fits on one — and a test that fails when
+      a card gets ROOMIER is testing the wrong thing. What matters is that no
+      line runs under the corner tag or off the card.
+    */
+    expect(lines.length).toBeGreaterThan(0);
     expect(TITLE_X + textWidth(lines[0]!, 16)).toBeLessThan(CORNER_X);
     for (const l of lines) expect(textWidth(l, 16)).toBeLessThanOrEqual(REST);
   });

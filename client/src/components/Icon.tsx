@@ -1,6 +1,6 @@
 import { ICON_PATHS } from "./iconsgen";
 import type { IconName } from "./iconNames";
-import omenPng from "./images/omen.png";
+import omenPng from "./images/omen.webp";
 
 /**
  * Every image in `components/images/`, keyed by filename without extension.
