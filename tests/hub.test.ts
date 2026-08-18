@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Hub } from '../server/hub';
 import type { Envelope, Outbound } from '../server/protocol';
+import { DEV_ACTIONS } from '../server/protocol';
 
 /** Deterministic ids, so tests can name tokens. */
 const ids = () => {
@@ -257,6 +258,127 @@ describe('development tools', () => {
     );
     const second = hub.handle('c0', { t: 'dev', action: 'restart' }, 0);
     expect(hands(second)).not.toBe(hands(first));
+  });
+
+  /*
+    The gate, checked against the LIST rather than against the two actions that
+    happened to exist when this was written.
+
+    `sit` hands over another seat's hand and hidden role; `turning` decides the
+    Marked player's aim. Any one of these reaching a real table is the whole
+    failure. A test naming actions individually is a test that passes for ever
+    while somebody adds a ninth.
+  */
+  it('are shut off by default — every one of them', () => {
+    for (const action of DEV_ACTIONS) {
+      const { hub } = seated();
+      const out = hub.handle('c0', { t: 'dev', action, seat: 'p1' }, 0);
+      expect((out[0].msg as { message: string }).message, action).toBe('Not available');
+      expect(msgs(out, 'state'), action).toHaveLength(0);
+    }
+  });
+
+  it('name the seat you asked for as the Vessel', () => {
+    // The whole reason `checkTurning` takes an override: being the Vessel is
+    // the state hardest to reach by playing, and the one most worth testing.
+    const { hub, seatB } = seated({ devTools: true });
+    const out = hub.handle('c0', { t: 'dev', action: 'turning', seat: seatB }, 0);
+    const v = (msgs(out, 'state')[0].msg as { view: { vessel: string | null } }).view;
+    expect(v.vessel).toBe(seatB);
+  });
+
+  it('set a status, but never conjure a Vessel out of one', () => {
+    const { hub, seatB } = seated({ devTools: true });
+    const status = (out: Envelope[], id: string) => {
+      const v = (to(msgs(out, 'state'), 'c0')[0].msg as {
+        view: { opponents: { id: string; status: string }[] };
+      }).view;
+      return v.opponents.find((o) => o.id === id)?.status;
+    };
+    const fell = hub.handle('c0', { t: 'dev', action: 'status', seat: seatB, status: 'revenant' }, 0);
+    expect(status(fell, seatB)).toBe('revenant');
+
+    /*
+      A Vessel is the far side of the Turning, not a tag. Setting the tag alone
+      would leave a seat that is the Vessel by name and a posse member by
+      contents — a state no game can reach, and therefore a bug report about a
+      situation nobody can have.
+    */
+    const asked = hub.handle('c0', {
+      t: 'dev', action: 'status', seat: seatB,
+      status: 'vessel' as 'posse',
+    }, 0);
+    expect(msgs(asked, 'state')).toHaveLength(0);
+  });
+
+  it('bring on Dusk through a real end of turn', () => {
+    const { hub } = seated({ devTools: true });
+    const out = hub.handle('c0', { t: 'dev', action: 'dusk' }, 0);
+    const events = (msgs(out, 'state')[0].msg as { events: { t: string }[] }).events;
+    expect(events.some((e) => e.t === 'PHASE')).toBe(true);
+  });
+
+  it('hand out Grit and cards', () => {
+    const { hub, seatA } = seated({ devTools: true });
+    const mine = (out: Envelope[]) => (to(msgs(out, 'state'), 'c0')[0].msg as {
+      view: { you: { grit: number; hand: { cardId: string }[] } };
+    }).view.you;
+    const before = mine(hub.handle('c0', { t: 'dev', action: 'grit', seat: seatA, n: 0 }, 0));
+    const after = mine(hub.handle('c0', { t: 'dev', action: 'grit', seat: seatA, n: 5 }, 0));
+    expect(after.grit).toBe(before.grit + 5);
+
+    const given = mine(hub.handle('c0', {
+      t: 'dev', action: 'give', seat: seatA, cardId: 'colt',
+    }, 0));
+    expect(given.hand.some((ci) => ci.cardId === 'colt')).toBe(true);
+    // A card id nothing knows is refused rather than thrown.
+    expect(hub.handle('c0', {
+      t: 'dev', action: 'give', seat: seatA, cardId: 'no-such-card',
+    }, 0)).toHaveLength(0);
+  });
+
+  /*
+    Sitting elsewhere is a SWAP, and the two halves both matter.
+
+    The chair you leave has to be handed to a bot or the game stops the moment
+    the turn comes back to it, and the chair you take has to stop being a bot or
+    two of you are playing it. The token follows the person: it is the claim on
+    "wherever this person is sitting", and one left pointing at the chair just
+    vacated would deal a reconnecting tester somebody else's hand.
+  */
+  describe('sitting in another seat', () => {
+    it('swaps the seat, the bot and the token together', () => {
+      const { hub, roomId, seatA, seatB } = seated({ devTools: true });
+      // B leaves, so their chair is free to take.
+      hub.handle('c1', { t: 'leave' }, 0);
+
+      const out = hub.handle('c0', { t: 'dev', action: 'sit', seat: seatB }, 0);
+      const joined = msgs(out, 'joined')[0].msg as { seat: string; token: string };
+      expect(joined.seat).toBe(seatB);
+
+      const seats = (o: Envelope[]) => (msgs(o, 'state')[0].msg as {
+        bots: string[];
+      }).bots;
+      expect(seats(out)).toContain(seatA);
+      expect(seats(out)).not.toContain(seatB);
+
+      // The token now claims the new chair, not the old one.
+      const back = hub.handle('c7', { t: 'rejoin', roomId, token: joined.token }, 0);
+      expect((msgs(back, 'joined')[0].msg as { seat: string }).seat).toBe(seatB);
+    });
+
+    it('refuses a chair somebody is sitting in', () => {
+      const { hub, seatB } = seated({ devTools: true });
+      const out = hub.handle('c0', { t: 'dev', action: 'sit', seat: seatB }, 0);
+      expect((out[0].msg as { message: string }).message)
+        .toBe('Somebody is already in that seat');
+    });
+
+    it('is a no-op when you are already there', () => {
+      const { hub, seatA } = seated({ devTools: true });
+      expect(hub.handle('c0', { t: 'dev', action: 'sit', seat: seatA }, 0))
+        .toHaveLength(0);
+    });
   });
 
   it('refuse a connection that is not in a room', () => {

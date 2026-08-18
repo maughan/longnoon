@@ -76,15 +76,38 @@ export interface ClientMsg {
    */
   speed: { value: Speed };
   /**
-   * Development affordances: force the Turning, deal a fresh game.
+   * Development affordances: take any seat, set a status, force the Turning,
+   * bring on Dusk, hand out Grit and cards, deal a fresh game.
    *
    * Rejected outright unless the server was started with `devTools: true`, and
    * that is off by default. This is not paranoia about a stray build — forcing
    * the Turning is the single most valuable thing the Marked player could buy,
-   * since their secret aim is scored at that exact instant.
+   * since their secret aim is scored at that exact instant, and `sit` hands
+   * over another seat's hand and hidden role outright.
+   *
+   * One flat shape rather than a union per action, because `parse` has to
+   * shape-check whatever arrives off a socket and a flat record is one check
+   * with no narrowing to get wrong. Fields not used by an action are ignored.
    */
-  dev: { action: 'turning' | 'restart' };
+  dev: {
+    action: DevAction;
+    /** Who the action is aimed at. Defaults to the sender's own seat. */
+    seat?: PlayerId;
+    /** `status` only. */
+    status?: 'posse' | 'revenant' | 'gone';
+    /** `give` only. */
+    cardId?: string;
+    /** `grit` only. */
+    n?: number;
+  };
 }
+
+/** Every development action. Kept as a list so `parse` can check membership. */
+export const DEV_ACTIONS = [
+  'turning', 'restart', 'sit', 'status', 'turn', 'dusk', 'grit', 'give',
+] as const;
+
+export type DevAction = (typeof DEV_ACTIONS)[number];
 
 export interface ServerMsg {
   /** A room exists. Creating one does not seat you — `join` does. */

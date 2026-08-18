@@ -1,0 +1,126 @@
+/*
+  Deliberately not felt-and-ink.
+
+  The dev panel is the one surface in the game that is not part of the game, and
+  it is one keystroke away from a live table. It reads as a tool — flat grey,
+  monospace, hard corners — so it can never be mistaken for something a player
+  is supposed to be looking at.
+*/
+.devtab {
+  position: fixed;
+  left: 0;
+  bottom: 18%;
+  z-index: 90;
+  padding: 8px 6px;
+  border: 1px solid #555;
+  border-left: none;
+  border-radius: 0 4px 4px 0;
+  background: #1c1c1e;
+  color: #b7b7bb;
+  font: 600 10px/1 ui-monospace, Menlo, monospace;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+}
+
+.devtab:hover { color: #fff; background: #2a2a2e; }
+
+.devpanel {
+  position: fixed;
+  left: 0;
+  top: 8%;
+  bottom: 8%;
+  width: 320px;
+  z-index: 91;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  padding: 12px;
+  background: #1c1c1e;
+  border: 1px solid #555;
+  border-left: none;
+  border-radius: 0 6px 6px 0;
+  color: #d8d8dc;
+  font: 12px/1.45 ui-monospace, Menlo, monospace;
+}
+
+.devpanel header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-size: 10px;
+  color: #8d8d93;
+}
+
+.devpanel header button {
+  background: none;
+  border: none;
+  color: #8d8d93;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.devpanel h4 {
+  margin: 0 0 6px;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #8d8d93;
+}
+
+.devrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.devseat {
+  padding: 8px 0;
+  border-top: 1px solid #333;
+}
+
+.devwho {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+
+.devwho small { color: #8d8d93; font-size: 10px; }
+
+.devpanel button:not(header button),
+.devpanel select {
+  padding: 4px 7px;
+  border: 1px solid #4a4a4f;
+  border-radius: 3px;
+  background: #2a2a2e;
+  color: #d8d8dc;
+  font: 11px/1 ui-monospace, Menlo, monospace;
+  cursor: pointer;
+}
+
+.devpanel select { width: 100%; padding: 5px; }
+
+.devpanel button:not(header button):hover:not(:disabled) {
+  background: #38383e;
+  color: #fff;
+}
+
+.devpanel button:disabled { opacity: 0.35; cursor: default; }
+
+/* The two that change the game irreversibly. */
+.devpanel button.warn {
+  border-color: #7d3a2c;
+  color: #e0a493;
+}
+
+.devnote {
+  margin: 6px 0 0;
+  color: #8d8d93;
+  font-size: 10px;
+  line-height: 1.4;
+}

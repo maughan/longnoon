@@ -47,6 +47,7 @@ import {
   type BedName,
 } from "./components/Ambience";
 import { useSettings, type SoundSettings } from "./settings";
+import { DevPanel } from "./components/DevPanel";
 import { iconForCard, iconForStatus, TERM_ICONS } from "./icons";
 
 /**
@@ -644,6 +645,14 @@ function Game({ net }: { net: Net }) {
         />
       )}
       {showGlossary && <GlossaryPanel onClose={() => setGlossary(false)} />}
+      {/*
+        Only when the server said the channel is open. Rendered last so it sits
+        over everything — including the Dusk sheet, which you may well want to
+        step past while testing something else.
+      */}
+      {net.dev && (
+        <DevPanel v={v} seat={net.seat} onDev={(msg) => net.send({ t: "dev", ...msg })} />
+      )}
     </div>
   );
 }
@@ -2836,7 +2845,20 @@ function faceOf(
   const face = turned && def.fevered ? def.fevered : null;
   const threat = def.type === "trouble" || def.type === "mythos";
   return {
-    kind: (turned ? "fevered" : def.type) as CardKind,
+    /*
+      The fallen speak in the Old One's voice, so their one card wears the
+      Vessel's colours.
+
+      Mapped rather than given a palette family of its own: a duplicate set of
+      hexes is a set that drifts, and there is exactly one card in the family.
+      The cast below is why this has to be handled at all — an unmapped
+      CardType reaches `PALETTE[kind]` as undefined and the face renders blank.
+    */
+    kind: (turned
+      ? "fevered"
+      : def.type === "revenant"
+        ? "vessel"
+        : def.type) as CardKind,
     title: face ? face.name : def.name,
     // A Fevered card says what it used to be, or nobody recognises the card
     // they bought two rounds ago.
@@ -2901,6 +2923,7 @@ const FAMILY: Record<Card["type"], string> = {
   omen: "Omen",
   mythos: "Mythos",
   vessel: "The Vessel",
+  revenant: "The Fallen",
 };
 
 function labelFor(c: Command): ReactNode {
@@ -2921,8 +2944,6 @@ function labelFor(c: Command): ReactNode {
       return "Pay the price";
     case "REVENANT_WHISPER":
       return "Whisper";
-    case "BECKON":
-      return `Beckon ${c.target}`;
     default:
       return c.t;
   }

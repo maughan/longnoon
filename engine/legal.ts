@@ -87,12 +87,14 @@ export function legalCommands(s: GameState, pid: PlayerId): Command[] {
     }
   }
 
-  // The fallen: Whisper (discard a card, +1 Whisper) and Beckon a living player
-  // toward a Sign.
+  // The fallen: Whisper — discard a card off your own dwindling deck for a
+  // Whisper. Beckoning is a card in the same hand and goes through PLAY_CARD.
   if (hasAction && p.status === 'revenant') {
-    for (const ci of p.hand) out.push({ t: 'REVENANT_WHISPER', uid: ci.uid });
-    for (const other of s.turnOrder) {
-      if (s.players[other].status === 'posse') out.push({ t: 'BECKON', target: other });
+    for (const ci of p.hand) {
+      // Not the granted card. It is not theirs to spend, and offering it would
+      // let a Revenant trade the one thing they are given for a Whisper.
+      if (card(ci.cardId).type === 'revenant') continue;
+      out.push({ t: 'REVENANT_WHISPER', uid: ci.uid });
     }
   }
 

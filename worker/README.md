@@ -69,3 +69,11 @@ presence in `Map`s that would need a serialisable form, and the object already
 knows who is connected — `getConnections()` is presence, with no map to persist.
 Rebuilding it on alarms is a piece of work in its own right and the old server
 still has it. `vote` currently answers with an error rather than pretending.
+
+**Six of the eight development actions.** `turning` and `restart` work; `sit`,
+`status`, `turn`, `dusk`, `grit` and `give` answer with an error. The game here
+is rebuilt by replaying the command log, so anything that changes state must be
+IN that log or it evaporates at the next hibernation — which is why `turning` is
+appended as `{ k: 'dev', action: 'turning' }`. Each of the six needs a log entry
+of its own, and half of `sit` is connection bookkeeping this object holds
+differently. Use `npm run serve:dev` for that work.

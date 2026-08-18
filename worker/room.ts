@@ -26,7 +26,10 @@ import {
 import { GameRoom, type Update } from "../server/room";
 import { visibleEvents } from "../server/events";
 import { beatsIn, hasDusk, hasTurning } from "../server/pace";
-import type { Inbound, Outbound, TableSeat } from "../server/protocol";
+import type {
+  DevAction, Inbound, Outbound, TableSeat,
+} from "../server/protocol";
+import { DEV_ACTIONS } from "../server/protocol";
 import type { Command, PlayerId, GameEvent } from "../engine/state";
 import { seatConfigs, type LogEntry, type RoomMeta, type Replay } from "./log";
 
@@ -402,11 +405,26 @@ export class GameRoomObject extends Server<Env> {
 
   async #dev(
     conn: Connection<ConnState>,
-    action: "turning" | "restart",
+    action: DevAction,
   ): Promise<void> {
     if (!this.#devOn()) return this.#err(conn, "Not available");
     const { meta } = await this.#load();
     if (!meta || !conn.state?.seat) return this.#err(conn, "Not in a room");
+
+    /*
+      The rest of the development panel is not ported, and says so rather than
+      doing nothing.
+
+      This object rebuilds its game by replaying the command log, so anything
+      that changes state has to be IN that log or it evaporates at the next
+      hibernation — `turning` is logged for exactly that reason. Seating,
+      statuses, Grit and gifts each need a log entry of their own, and half of
+      `sit` is connection bookkeeping this object holds differently. Worth
+      doing; not worth faking. Use `npm run serve:dev` for now.
+    */
+    if (action !== "turning" && action !== "restart") {
+      return this.#err(conn, "That development tool is not available here");
+    }
 
     if (action === "restart") {
       // A fresh deal is a new seed and an empty log, not a rewind.
@@ -637,7 +655,9 @@ function parse(raw: unknown): Inbound | null {
     case "begin":
       return typeof m.marked === "boolean" ? (m as Inbound) : null;
     case "dev":
-      return m.action === "turning" || m.action === "restart"
+      // The full list, so an unported action is answered with a sentence that
+      // explains itself rather than with "malformed".
+      return (DEV_ACTIONS as readonly string[]).includes(m.action as string)
         ? (m as Inbound)
         : null;
     default:

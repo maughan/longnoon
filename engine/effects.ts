@@ -453,7 +453,7 @@ export function choiceOptions(
     // pick is not a temptation — it is a raffle.
     return SIGN_IDS.map((id) => ({ key: id, label: card(id).name }));
   }
-  if (op.op === 'callSign' || op.op === 'gift') {
+  if (op.op === 'callSign' || op.op === 'gift' || op.op === 'beckon') {
     return s.turnOrder
       .filter((id) => s.players[id].status === 'posse')
       .map((id) => ({ key: id, label: s.players[id].name }));
@@ -909,6 +909,24 @@ export function execOp(
       // No reward named. The target knowing the exact bounty on their own head
       // changes the decision, so the payoff is logged when it PAYS, not now.
       ev.push({ t: 'OFFERED', by: controller, target: op.to, cardId: id });
+      return;
+    }
+    /**
+     * COME AND SEE. Mark a living player; they are paid if they take the bait.
+     *
+     * The Revenant doing openly what the Marked player does in secret, which is
+     * what muddies the read on both.
+     *
+     * One slot, not a list: beckoning a second player simply moves the mark.
+     * That was true of the `BECKON` command too — a Revenant with two actions
+     * could press it twice and only the last one counted — so the card being
+     * granted one to a turn takes nothing away.
+     */
+    case 'beckon': {
+      const pid = chosen ?? resolvePlayers(s, op.target, controller)[0];
+      if (!pid || s.players[pid]?.status !== 'posse') return;
+      s.beckoned = pid;
+      ev.push({ t: 'BECKONED', by: controller, target: pid });
       return;
     }
     case 'destroy': {

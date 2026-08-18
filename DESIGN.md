@@ -169,6 +169,12 @@ It lets the Revenant do openly what the Marked does secretly, which muddies the
 read. It is also the most fiddly action in the game and the **first thing to cut**
 if play feels muddy.
 
+*Implemented as a card* — "Come and See", granted to a Revenant at the start of
+every turn and gone at the end of it. As a bare command it was a row of buttons
+reading "Beckon p1", which explained nothing about what beckoning does; as a
+card it carries its own rules text and asks who through the ordinary target
+prompt. Same cost, same once-a-turn reach, one less interface.
+
 ---
 
 ## 7. Threats and the Street

@@ -357,6 +357,25 @@ function resolvePending(view: ClientState, legal: Command[]): Command {
       if (cmd) return cmd;
     }
   }
+  /*
+    Come and See: the least-corrupted seat.
+
+    The aim is to spread Signs, not to deepen someone already lost — a player
+    with five of them is buying more with or without the Grit. This is the
+    ranking the deleted `BECKON` command's own branch used; it moved here with
+    the mechanic, because the choice is now a prompt rather than a command.
+  */
+  if (view.pending?.op === 'beckon') {
+    const bySigns = new Map(view.opponents.map((o) => [o.id, o.signsHeld]));
+    const ranked = [...opts].sort(
+      (a, b) => (bySigns.get(a.key) ?? 0) - (bySigns.get(b.key) ?? 0),
+    );
+    for (const o of ranked) {
+      const cmd = pickKey(o.key);
+      if (cmd) return cmd;
+    }
+  }
+
   const me = view.you?.id;
   if (me) {
     const mine = pickKey(me);
@@ -371,22 +390,24 @@ function resolvePending(view: ClientState, legal: Command[]): Command {
  * opposite of what their cards do if played carelessly, since most Fevered faces
  * clear Threats and that helps the posse.
  *
- * Act I: Beckon someone toward a Sign, else Whisper. Act II: Whispers and
+ * Act I: play Come and See toward a Sign, else Whisper. Act II: Whispers and
  * Beckons are spent currency, and playing a card would mostly help the posse,
  * so they sit still and let their deck burn down.
  */
 function fallenMove(view: ClientState, legal: Command[]): Command {
   if (view.act === 'trouble') {
-    // Beckon the least-corrupted seat: the aim is to spread Signs, not to
-    // deepen someone already lost.
-    const beckons = legal.filter((c) => c.t === 'BECKON');
-    if (beckons.length) {
-      const bySigns = new Map(view.opponents.map((o) => [o.id, o.signsHeld]));
-      return beckons.sort(
-        (a, b) =>
-          (bySigns.get((a as { target: string }).target) ?? 0) -
-          (bySigns.get((b as { target: string }).target) ?? 0),
-      )[0];
+    /*
+      Come and See, the card the Revenant is granted every turn.
+
+      Found by TYPE, not by id: a bot that hard-codes a card id is a bot that
+      silently stops using a mechanic the moment the card is renamed, and
+      "suspect the bots first" has been the answer to a dead mechanic four
+      times in this project. Who it names is decided in `resolvePending`.
+    */
+    const beckon = view.you?.hand.find((ci) => card(ci.cardId).type === 'revenant');
+    if (beckon) {
+      const cmd = legal.find((c) => c.t === 'PLAY_CARD' && c.uid === beckon.uid);
+      if (cmd) return cmd;
     }
     const whisper = findCmd(legal, 'REVENANT_WHISPER');
     if (whisper) return whisper;

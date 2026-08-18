@@ -52,6 +52,8 @@ function describeEach(ops: readonly Op[]): string[] {
           return "Name a card type; nobody may play it next round";
         case "gift":
           return "A player gains a Fevered Sign";
+        case "beckon":
+          return "Name a living player. The next Sign they buy pays them Grit";
         case "banishOmen":
           return op.target === "all"
             ? "May instead destroy an Omen; every player takes a Scar"

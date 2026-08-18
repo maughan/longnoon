@@ -31,6 +31,10 @@ export function iconForCard(def: Card, fevered = false): IconName {
     mark — the one family they can never be.
   */
   if (def.type === 'vessel') return 'vessel';
+  // Same reasoning for the fallen's granted card: the mark on the seat and the
+  // mark on the card are one thing. Without this it falls through to `kit` and
+  // prints the Provision mark, which is the one family it can never be.
+  if (def.type === 'revenant') return 'revenant';
   if (def.type === 'omen') return 'omen';
   if (def.type === 'trouble' || def.type === 'mythos') return 'menace';
   if (def.type === 'scar') return 'scar';

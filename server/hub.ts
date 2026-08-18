@@ -15,7 +15,10 @@ import { randAt } from '../engine/rng';
 import type { Command, GameEvent, PlayerId } from '../engine/state';
 import { Lobby, type LobbyConfig } from './lobby';
 import type { Update } from './room';
-import type { Envelope, Inbound, Outbound, Speed, TableSeat } from './protocol';
+import type {
+  ClientMsg, Envelope, Inbound, Outbound, Speed, TableSeat,
+} from './protocol';
+import { DEV_ACTIONS } from './protocol';
 import { beatsIn, hasDusk, hasTurning } from './pace';
 
 interface Session {
@@ -238,7 +241,7 @@ export class Hub {
       case 'rejoin': return this.rejoin(conn, msg.roomId, msg.token, now);
       case 'command': return this.command(conn, msg.command, now);
       case 'vote': return this.vote(conn, msg.seat, msg.choice, now);
-      case 'dev': return this.dev(conn, msg.action);
+      case 'dev': return this.dev(conn, msg);
       case 'leave': return this.leave(conn, now);
       case 'seat': return this.setSeat(conn, msg.index, msg.kind);
       case 'begin': return this.begin(conn, msg.marked, now);
@@ -653,20 +656,90 @@ export class Hub {
     return out;
   }
 
-  /** Development affordances. Refused flat unless `devTools` was asked for. */
-  private dev(conn: string, action: 'turning' | 'restart'): Envelope[] {
+  /**
+   * Development affordances. Refused flat unless `devTools` was asked for.
+   *
+   * Every branch below is a thing no player may ever do, and two of them —
+   * `sit` and `turning` — would decide a real game on their own. The single
+   * `devTools` gate is what stands between them and a live table, so it is
+   * checked once, first, before anything is read out of the message.
+   */
+  private dev(conn: string, msg: ClientMsg['dev']): Envelope[] {
     if (!this.devTools) return [err(conn, 'Not available')];
     const session = this.sessions.get(conn);
     const room = session && this.rooms.get(session.roomId);
     if (!session || !room?.lobby) return [err(conn, 'Not in a room')];
     const game = room.lobby.room;
-    const updates = action === 'turning'
-      ? game.devForceTurning()
-      // A distinct seed each time, or "deal again" deals the same game again.
-      : game.devRestart(`${session.roomId}-${this.dealt++}`);
-    // The pacing clock is stale after either of these.
+    // Aimed at the sender's own seat unless it names another.
+    const seat = msg.seat ?? session.seat;
+
+    // Taking a seat is a connection change, not a game one — see `devSit`.
+    if (msg.action === 'sit') return this.devSit(conn, room, seat, session);
+
+    const updates = ((): Update[] => {
+      switch (msg.action) {
+        case 'turning': return game.devForceTurning(seat);
+        // A distinct seed each time, or "deal again" deals the same game again.
+        case 'restart': return game.devRestart(`${session.roomId}-${this.dealt++}`);
+        case 'status': return msg.status ? game.devStatus(seat, msg.status) : [];
+        case 'turn': return game.devTurn(seat);
+        case 'dusk': return game.devDusk();
+        case 'grit': return game.devGrit(seat, msg.n ?? 1);
+        case 'give': return msg.cardId ? game.devGive(seat, msg.cardId) : [];
+        default: return [];
+      }
+    })();
+    // The pacing clock is stale after any of these.
     this.nextBotAt.delete(session.roomId);
     return this.deliver(room, updates);
+  }
+
+  /**
+   * Development only: move this connection into another seat.
+   *
+   * A swap rather than a move. The seat being left is handed to a bot, or the
+   * game stops the moment the turn comes back round to a chair with nobody in
+   * it; the seat being taken is reclaimed from whatever bot was holding it.
+   * That also means the tester can bounce between two seats all game and the
+   * table keeps playing itself in between.
+   *
+   * The token follows the connection rather than the chair. It is the claim on
+   * "wherever this person is sitting", so a reconnect after a swap has to land
+   * in the new seat — leaving it pointing at the old one would let a refresh
+   * silently deal them somebody else's hand.
+   */
+  private devSit(
+    conn: string, room: Room, seat: PlayerId, session: Session,
+  ): Envelope[] {
+    const game = room.lobby!.room;
+    if (!game.seat(seat)) return [err(conn, 'No such seat')];
+    if (seat === session.seat) return [];
+    if (room.conns.has(seat) && room.conns.get(seat) !== conn) {
+      return [err(conn, 'Somebody is already in that seat')];
+    }
+
+    const left = session.seat;
+    game.botify(left);
+    game.reclaim(seat);
+    room.conns.delete(left);
+    room.conns.set(seat, conn);
+    session.seat = seat;
+
+    // Move the claim, do not mint a second one. A token left pointing at the
+    // chair just vacated is a live claim on a seat now played by a bot, and
+    // whoever reconnects with it is dealt a hand that is no longer theirs.
+    const held = [...room.tokens].find(([, id]) => id === left)?.[0] ?? this.newId();
+    room.tokens.set(held, seat);
+    // The host follows the person, not the chair: they are the same human.
+    if (room.host && !room.conns.has(room.host)) room.host = seat;
+
+    return [
+      { conn, msg: {
+        t: 'joined', roomId: session.roomId, seat, token: held, dev: this.devTools,
+        host: room.host === seat, speed: room.speed,
+      } },
+      ...this.syncAll(room),
+    ];
   }
 
   // --------------------------------------------------------------- sending
@@ -741,7 +814,10 @@ function parse(raw: unknown): Inbound | null {
       return str('seat') && (m.choice === 'bot' || m.choice === 'wait')
         ? (m as Inbound) : null;
     case 'dev':
-      return m.action === 'turning' || m.action === 'restart'
+      // Membership, not `typeof string`: the action indexes a switch whose
+      // default is silence, and a silent no-op is the hardest dev tool to
+      // debug. Payload fields are checked by the handler that uses them.
+      return (DEV_ACTIONS as readonly string[]).includes(m.action as string)
         ? (m as Inbound) : null;
     case 'leave':
       return m as Inbound;

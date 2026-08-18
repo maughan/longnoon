@@ -15,8 +15,13 @@ import { playerView, type ClientState } from '../engine/view';
 import { randAt } from '../engine/rng';
 import { POLICIES } from '../sim/bots';
 import { visibleEvents } from './events';
+import { card } from '../content/cards';
+import { newInstance } from '../engine/effects';
 
 export type SeatKind = 'human' | 'bot';
+
+/** Statuses the development panel may assign. Never `vessel` — see `devStatus`. */
+const DEV_STATUSES: readonly string[] = ['posse', 'revenant', 'gone'];
 
 export interface Seat {
   id: PlayerId;
@@ -259,13 +264,106 @@ export class GameRoom {
    * never be reachable in a real game: choosing the moment of the Turning is
    * the single most valuable thing the Marked player could buy.
    */
-  devForceTurning(): Update[] {
+  devForceTurning(vessel?: PlayerId): Update[] {
     if (this.state.act !== 'trouble' || this.over) return [];
     const ev: GameEvent[] = [];
     this.state = structuredClone(this.state);
     this.state.whispers = this.state.tuning.whisperThreshold;
-    checkTurning(this.state, ev);
+    checkTurning(this.state, ev, vessel);
     return this.broadcast(ev);
+  }
+
+  /**
+   * Development only. Put a seat into a status without playing it into one.
+   *
+   * `vessel` is NOT settable here and that is deliberate: being the Vessel is
+   * not a status you can wear, it is the far side of the Turning — a replaced
+   * deck, every Sign turned, the Street flipped. Assigning the tag alone would
+   * produce a seat that is the Vessel by name and a posse member by contents,
+   * which is a state no game can reach and therefore a bug report about a
+   * situation nobody can have. Use `devForceTurning(seat)` for that.
+   *
+   * Falling is the reverse: `revenant` and `gone` are ordinary statuses the
+   * engine assigns mid-game, so setting them lands on a state the rules
+   * already produce.
+   */
+  devStatus(seatId: PlayerId, status: 'posse' | 'revenant' | 'gone'): Update[] {
+    const p = this.state.players[seatId];
+    // Checked at RUNTIME, not just in the type. This value arrives off a socket
+    // and the type is a promise the sender has not made — `'vessel'` typed as
+    // anything else would otherwise walk straight into the assignment below and
+    // produce a Vessel with a posse member's deck.
+    if (!DEV_STATUSES.includes(status)) return [];
+    if (!p || this.over || p.status === 'vessel') return [];
+    this.state = structuredClone(this.state);
+    this.state.players[seatId].status = status;
+    return this.sync();
+  }
+
+  /**
+   * Development only. Hand a seat Grit, or a card into their hand.
+   *
+   * Grit is `gritThisTurn`, the same field a Provision cashes into, so it is
+   * spent and cleared by the ordinary rules — this only saves you the turns it
+   * would have taken to earn.
+   */
+  devGrit(seatId: PlayerId, n: number): Update[] {
+    const p = this.state.players[seatId];
+    if (!p || this.over) return [];
+    this.state = structuredClone(this.state);
+    this.state.players[seatId].gritThisTurn += n;
+    return this.sync();
+  }
+
+  /** Development only. A card straight into a hand, skipping the market. */
+  devGive(seatId: PlayerId, cardId: string): Update[] {
+    const p = this.state.players[seatId];
+    if (!p || this.over) return [];
+    let def;
+    try { def = card(cardId); } catch { return []; }
+    this.state = structuredClone(this.state);
+    // Fevered if the Turning has happened, so the card behaves like every other
+    // Sign on the table rather than like a souvenir from Act I.
+    const fevered = this.state.act === 'mythos' && def.type === 'sign';
+    this.state.players[seatId].hand.push(newInstance(this.state, cardId, fevered));
+    return this.sync();
+  }
+
+  /**
+   * Development only. Give the turn to a seat, or bring on Dusk.
+   *
+   * Both go through a real `END_TURN` rather than assigning `activePlayer`,
+   * because the turn boundary is where the game does its work: the hand is
+   * swept, the Revenant is granted its card, the deck recycles, and at the end
+   * of the order the sun goes down. Setting the field would skip all of it and
+   * produce turns that look right and are not.
+   *
+   * A pending choice is dropped first — it belongs to a turn that is about to
+   * stop existing, and `apply` would refuse the END_TURN while it stands.
+   */
+  devTurn(seatId: PlayerId): Update[] {
+    const order = this.state.turnOrder;
+    const to = order.indexOf(seatId);
+    if (to === -1 || this.over) return [];
+    const from = order[(to - 1 + order.length) % order.length]!;
+    return this.devEndTurnAs(from);
+  }
+
+  /** Development only. End the last seat's turn, which is what brings Dusk. */
+  devDusk(): Update[] {
+    if (this.over) return [];
+    return this.devEndTurnAs(this.state.turnOrder[this.state.turnOrder.length - 1]!);
+  }
+
+  private devEndTurnAs(seatId: PlayerId): Update[] {
+    const s = structuredClone(this.state);
+    s.pending = null;
+    s.resolution = null;
+    s.activePlayer = seatId;
+    this.state = s;
+    const r = apply(this.state, seatId, { t: 'END_TURN' });
+    this.state = r.state;
+    return this.broadcast(r.events);
   }
 
   /**

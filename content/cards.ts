@@ -723,6 +723,30 @@ const VESSEL_CARDS: Card[] = [
   },
 ];
 
+/**
+ * The fallen's one card.
+ *
+ * Granted at the start of every Revenant turn and gone at the end of it — see
+ * `CardType['revenant']` for why it cannot simply live in their deck.
+ *
+ * `grit: 0` matters: `SPEND_GRIT` is offered per hand card with grit above
+ * zero, and a Revenant cashing in their own voice for a coin is not a move
+ * anybody meant to offer.
+ */
+const REVENANT_CARDS: Card[] = [
+  {
+    id: "come-and-see",
+    name: "Come and See",
+    flavour: "It is warmer over here. That is the first lie.",
+    type: "revenant",
+    grit: 0,
+    ops: [{ op: "beckon", target: "choose" }],
+  },
+];
+
+/** The card a Revenant is granted each turn. */
+export const BECKON_CARD_ID = "come-and-see";
+
 // Act I Trouble. The Bounty line is what makes Act I combat generative —
 // "Nothing in Act II pays a Bounty. Ever." (DESIGN.md §7's economy inversion.)
 const TROUBLE: Card[] = [
@@ -1050,6 +1074,7 @@ export const ALL_CARDS: Card[] = [
   ...TURNED,
   ...MYTHOS,
   ...VESSEL_CARDS,
+  ...REVENANT_CARDS,
 ];
 
 const INDEX: Record<string, Card> = Object.fromEntries(

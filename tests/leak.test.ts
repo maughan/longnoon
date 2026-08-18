@@ -55,6 +55,16 @@ function knowable(v: ClientState): Set<string> {
   for (const c of ALL_CARDS) {
     if (c.type === 'sign') { names.add(c.name); if (c.fevered) names.add(c.fevered.name); }
   }
+  /*
+    The fallen's granted card is public by construction.
+
+    Every Revenant is given the same one, it is never drawn from a deck and it
+    goes nowhere when played — so it appears in no pile any viewer could check,
+    which makes "Bo plays Come and See" look unearned to the rule above. It is
+    not: there is nothing to learn from it. Knowing a Revenant has it is knowing
+    they are a Revenant, which is already published in the player list.
+  */
+  for (const c of ALL_CARDS) if (c.type === 'revenant') names.add(c.name);
   return names;
 }
 

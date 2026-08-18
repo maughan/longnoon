@@ -574,11 +574,60 @@ describe('the Revenant burns out', () => {
     expect(r.state.players[victim].hand).toHaveLength(0);
   });
 
-  it('Beckon pays a living player for buying a Sign', () => {
+  /*
+    The granted card, and the two things that must stay true of it.
+
+    It is not in their deck — a Revenant's deck is their health and it shrinks
+    to nothing, so a card in it would be both a card of life they never had and
+    one their own burn-out takes away. So: given at the start of the turn,
+    gone at the end of it, and never in the discard.
+  */
+  it('a Revenant is granted Come and See, and it never enters their deck', () => {
+    const { s, victim } = fallen();
+    // A deck deep enough that the opening draw does not burn them out.
+    s.players[victim].deck = Array.from({ length: 6 }, () =>
+      newInstance(s, 'six-gun', true));
+    s.players[victim].hand = [];
+    const before = s.turnOrder[2];
+    s.activePlayer = before; s.actionsLeft = 1;
+
+    const cur = apply(s, before, { t: 'END_TURN' }).state;
+    expect(cur.activePlayer).toBe(victim);
+    const hand = cur.players[victim].hand;
+    expect(hand.filter((ci) => card(ci.cardId).type === 'revenant')).toHaveLength(1);
+    // It rides on top of a full hand rather than eating a card out of it.
+    expect(hand).toHaveLength(cur.tuning.handSize + 1);
+    // And it is not something they can cash in or spend for a Whisper.
+    const uid = hand.find((ci) => card(ci.cardId).type === 'revenant')!.uid;
+    const offered = legalCommands(cur, victim);
+    expect(offered.some((c) => c.t === 'REVENANT_WHISPER' && c.uid === uid)).toBe(false);
+    expect(offered.some((c) => c.t === 'SPEND_GRIT' && c.uids.includes(uid))).toBe(false);
+    expect(offered.some((c) => c.t === 'PLAY_CARD' && c.uid === uid)).toBe(true);
+
+    // Swept, not discarded: it goes nowhere at all.
+    const ended = apply(cur, victim, { t: 'END_TURN' }).state;
+    const seen = [
+      ...ended.players[victim].deck,
+      ...ended.players[victim].discard,
+      ...ended.players[victim].hand,
+    ];
+    expect(seen.some((ci) => card(ci.cardId).type === 'revenant')).toBe(false);
+  });
+
+  it('Come and See pays a living player for buying a Sign', () => {
     const { s, victim } = fallen();
     const target = s.turnOrder[0];
     s.activePlayer = victim; s.actionsLeft = 2;
-    let cur = apply(s, victim, { t: 'BECKON', target }).state;
+    // Granted, not drawn — put it in hand the way `startTurn` would. The real
+    // grant is driven through a turn in the test below.
+    const beckon = newInstance(s, 'come-and-see', false);
+    s.players[victim].hand.push(beckon);
+    const played = apply(s, victim, { t: 'PLAY_CARD', uid: beckon.uid }).state;
+    // A card that asks who, rather than a button per seat.
+    expect(played.pending?.op).toBe('beckon');
+    let cur = apply(played, victim, {
+      t: 'RESOLVE_CHOICE', choiceId: played.pending!.id, picks: [target],
+    }).state;
     expect(cur.beckoned).toBe(target);
 
     cur.activePlayer = target; cur.actionsLeft = 3;

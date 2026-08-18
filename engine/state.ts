@@ -39,7 +39,17 @@ export type CardType =
    * Vessel holding ten of these would read as the most corrupt seat at the
    * table by a mile. Never in the market, never bought, never shuttered.
    */
-  | 'vessel';
+  | 'vessel'
+  /**
+   * The one card a Revenant is granted, and nothing else.
+   *
+   * Not in their deck. A Revenant's deck is their health — it shrinks by
+   * `revenantDecay` a recycle and when it is empty they are gone — so a card
+   * living in it would be a card that both extends their life and gets buried
+   * by their own burn-out. Granted at the start of each of their turns and
+   * gone at the end of it, so it never touches deck, discard or hand size.
+   */
+  | 'revenant';
 
 export type Target =
   | 'self'
@@ -117,6 +127,15 @@ export type Op =
    * chronicle would have hidden the sentence and not the information.
    */
   | { op: 'callSign'; target: Target }
+  /**
+   * COME AND SEE. Name a living player; the next Sign they buy pays them Grit.
+   *
+   * An op on a card rather than the bare `BECKON` command it replaces. The
+   * command was a naked button reading "Beckon p1" — no rules text, no card,
+   * and a separate row of one button per seat. The card says what beckoning
+   * does and asks who through the ordinary `target: 'choose'` prompt.
+   */
+  | { op: 'beckon'; target: Target }
   /** SOMETHING COMES UP THE STREET. A Mythos card into an empty slot. */
   | { op: 'summon' }
   /** NOT THAT ONE. Name a card type; nobody may play it next round. */
@@ -748,6 +767,6 @@ export type Command =
     is a permanent button gets pressed every turn, and one that has to be drawn
     cannot be.
   */
-  // Revenant
-  | { t: 'REVENANT_WHISPER'; uid: string }
-  | { t: 'BECKON'; target: PlayerId };
+  // Revenant. BECKON went the same way as the Vessel's five: it is a card in
+  // their hand now, played through PLAY_CARD like everything else.
+  | { t: 'REVENANT_WHISPER'; uid: string };

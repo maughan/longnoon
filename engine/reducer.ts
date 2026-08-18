@@ -1,7 +1,7 @@
 import type {
   GameState, Command, PlayerId, GameEvent, CardInstance, CardId,
 } from './state';
-import { card } from '../content/cards';
+import { card, BECKON_CARD_ID } from '../content/cards';
 import { shuffle } from './rng';
 import {
   opsFor, pushOps, runQueue, resolveChoice, drawCards,
@@ -77,7 +77,11 @@ function applyInner(
       const inst = p.hand.splice(idx, 1)[0];
       const def = card(inst.cardId);
       s.actionsLeft--;
-      p.discard.push(inst);
+      // A granted card goes nowhere. It was never in the deck, so putting it in
+      // the discard would deal the Revenant a card of health they never had —
+      // and one that comes round again every recycle, which is the opposite of
+      // a clock that shrinks.
+      if (def.type !== 'revenant') p.discard.push(inst);
       ev.push({ t: 'PLAYED', player: playerId, cardId: def.id, fevered: inst.fevered });
       // One bar, both acts: in Act I this pushes towards the Turning, in Act II
       // towards the next tranche of Doom. Same gesture, same cost, and the
@@ -196,24 +200,6 @@ function applyInner(
       break;
     }
 
-    /**
-     * Beckon: mark a living player, and pay them if they take the bait.
-     *
-     * The Revenant doing openly what the Marked player does in secret, which is
-     * what muddies the read on both.
-     */
-    case 'BECKON': {
-      if (p.status !== 'revenant') throw new IllegalCommand('Not a Revenant');
-      requireAction(s);
-      if (s.players[c.target]?.status !== 'posse') {
-        throw new IllegalCommand('Not a living member of the posse');
-      }
-      s.actionsLeft--;
-      s.beckoned = c.target;
-      ev.push({ t: 'BECKONED', by: playerId, target: c.target });
-      break;
-    }
-
     case 'END_TURN':
       endTurn(s, ev);
       break;
@@ -323,15 +309,34 @@ function startTurn(s: GameState, ev: GameEvent[]): void {
   // leave the turn resting on someone who no longer exists. (Read through the
   // map, not `p` — drawCards mutates the status behind TypeScript's narrowing.)
   if (s.players[s.activePlayer].status === 'gone') { advance(s, ev); return; }
+  grantRevenantCard(s);
+}
+
+/**
+ * The fallen's one card, put in their hand for the turn.
+ *
+ * After the draw, deliberately: counted before it, it would come out of
+ * `handSize` and cost the Revenant a real card every turn. Swept unplayed at
+ * the end of the turn and granted again at the start of the next, so it can
+ * neither be hoarded nor lost.
+ */
+function grantRevenantCard(s: GameState): void {
+  const p = s.players[s.activePlayer];
+  if (p.status !== 'revenant') return;
+  if (p.hand.some((ci) => ci.cardId === BECKON_CARD_ID)) return;
+  p.hand.push(newInstance(s, BECKON_CARD_ID, false));
 }
 
 function endTurn(s: GameState, ev: GameEvent[]): void {
   const p = s.players[s.activePlayer];
   if (s.beckoned === p.id) s.beckoned = null;
-  if (p.hand.length) {
-    ev.push({ t: 'DISCARDED', player: p.id, n: p.hand.length, hand: true });
+  // The granted card is not theirs to discard — see `grantRevenantCard`. Taken
+  // out before the count, or the sweep would announce a card that went nowhere.
+  const swept = p.hand.filter((ci) => card(ci.cardId).type !== 'revenant');
+  if (swept.length) {
+    ev.push({ t: 'DISCARDED', player: p.id, n: swept.length, hand: true });
   }
-  p.discard.push(...p.hand);
+  p.discard.push(...swept);
   p.hand = [];
   p.gritThisTurn = 0;
   advance(s, ev);
@@ -395,7 +400,16 @@ function dusk(s: GameState, ev: GameEvent[]): void {
 // The Turning
 // ---------------------------------------------------------------------------
 
-export function checkTurning(s: GameState, ev: GameEvent[]): void {
+/**
+ * `forceVessel` is the development tool's seam, and the only caller that ever
+ * passes it. Ordinary play never names the Vessel — that is the whole point of
+ * the seat — so the parameter exists so the dev panel can say "turn, and make
+ * ME the Vessel" through the real Turning rather than through a second,
+ * half-right implementation of it. See `GameRoom.devForceTurning`.
+ */
+export function checkTurning(
+  s: GameState, ev: GameEvent[], forceVessel?: PlayerId,
+): void {
   if (s.act !== 'trouble') return;
   // The Long Season ends either because someone couldn't resist, or because it
   // simply ran out — without the second, a table that buys no Signs never Turns
@@ -408,12 +422,13 @@ export function checkTurning(s: GameState, ev: GameEvent[]): void {
   const living = livingPlayers(s);
   const marked = s.turnOrder.find((id) => s.players[id].role === 'marked') ?? null;
   const candidates = living.length ? living : s.turnOrder;
-  let vessel = candidates.reduce((a, b) => {
+  const chosen = candidates.reduce((a, b) => {
     const d = signsHeld(s, b) - signsHeld(s, a);
     if (d > 0) return b;
     if (d === 0 && b === marked) return b;
     return a;
   });
+  const vessel = forceVessel && s.players[forceVessel] ? forceVessel : chosen;
 
   s.vessel = vessel;
   s.players[vessel].status = 'vessel';

@@ -208,11 +208,10 @@ describe('isLegal — the server gate for online play', () => {
   it('rejects commands the rules never offered', () => {
     const s = fresh();
     const me = s.activePlayer;
-    const other = s.turnOrder.find((id) => id !== me)!;
     const evil: Command[] = [
       { t: 'BUY', cardId: 'colt' },                    // no Grit
       { t: 'PAY_TOLL', slot: 2 },                      // nothing there to pay
-      { t: 'BECKON', target: other },                  // not a Revenant
+      { t: 'PLAY_CARD', uid: 'come-and-see' },         // not a Revenant
       { t: 'REVENANT_WHISPER', uid: 'not-a-card' },    // not a Revenant
       { t: 'SPEND_GRIT', uids: ['not-a-card'] },
     ];

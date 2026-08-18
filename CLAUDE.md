@@ -407,6 +407,34 @@ Revenant loses `revenantDecay` cards per recycle and, once their deck is empty,
 is **gone for good**; the posse's answer is to outlast them. The Old One still
 floors at one card so the endgame cannot stall.
 
+### Beckoning is a card, and it is granted rather than owned
+
+"Come and See" is the Revenant's one card: name a living player, and the next
+Sign they buy pays them `beckonGrit`. It replaced a bare `BECKON` command, which
+rendered as a row of buttons reading "Beckon p1" — no rules text, no card, and a
+second interface for one verb. Everyone at the table now plays cards.
+
+**It is granted at the start of each Revenant turn and gone at the end of it**,
+and that is the only part with a trap in it. A Revenant's deck is their health:
+it shrinks by `revenantDecay` a recycle and empties into `gone`. A card living
+in that deck would be both a card of life they never had AND one their own
+burn-out eventually takes off them. So it goes nowhere — three guards, all
+reading `CardType === 'revenant'`:
+
+- `startTurn` grants it **after** the draw, or it would come out of `handSize`
+  and cost a real card every turn;
+- `endTurn` sweeps it without discarding it, and before the count, so
+  `DISCARDED` does not announce a card that went nowhere;
+- `PLAY_CARD` does not push it to the discard.
+
+`legalCommands` also withholds it from `REVENANT_WHISPER`, or a Revenant could
+trade the one thing they are given for a Whisper. Its `grit: 0` keeps it out of
+`SPEND_GRIT` by the ordinary rule.
+
+**One slot, not a list.** Beckoning twice moves the mark rather than doubling
+it, which was true of the command too — so being limited to one card a turn
+takes nothing away. The bot finds the card **by type, not by id**.
+
 Watch for this when touching `drawCards`/`startTurn`: a Revenant can burn out on
 the very draw that starts their turn, which used to leave `activePlayer` on a
 player with no legal commands and hang the game. `startTurn` advances past them,
@@ -722,7 +750,8 @@ not a gap (see milestone 3 below).
 - Constraints are stored on cards but not enforced by `legalCommands`.
 - Act I Bounty rewards aren't modelled — only Clear and Menace, so Act I combat
   is not yet generative and the Act I → Act II economy inversion is unmeasured.
-- Revenant actions (WHISPER, BECKON, RISE, Grave-token spending) are absent.
+- Revenant RISE and Grave-token spending are absent — they went with burial.
+  Whisper and Beckon are both in.
 
 ## The simulator
 
@@ -976,9 +1005,11 @@ Three things learned the hard way, all in comments at the site:
   purpose. Hence the `exclude` in `tsconfig.json`.
 
 **The `dev` message channel is the exception to "everything goes through
-`isLegal`".** It forces the Turning (`GameRoom.devForceTurning`, which pushes the
-Whisper track to its threshold and lets the real `checkTurning` fire, rather than
-reimplementing the hinge of the game) and re-deals a fresh Act I. It is:
+`isLegal`".** It is a panel (`client/src/components/DevPanel.tsx`, a tab on the
+left edge) with eight actions: **sit** in any seat, set a **status**, force the
+**turning** naming any seat as the Vessel, bring on **dusk**, hand a seat the
+**turn**, give **grit** or a card (**give**), and **restart** with a fresh deal.
+It is:
 
 - **off by default** — `Hub` takes `devTools`, and only `LONG_NOON_DEV=1 npm run
   serve:dev` turns it on;
@@ -989,7 +1020,37 @@ reimplementing the hinge of the game) and re-deals a fresh Act I. It is:
 
 Keep it that way. Choosing the moment of the Turning is the single most valuable
 thing the Marked player could buy: their secret aim is scored at that exact
-instant. There is deliberately no way back from the Turning either — Signs are
+instant — and `sit` hands over another seat's hand and hidden role outright.
+`tests/hub.test.ts` checks the refusal against **`DEV_ACTIONS`**, not against a
+list of action names typed out by hand, because a test naming them individually
+passes for ever while somebody adds a ninth.
+
+Four rulings inside the panel, each of which is a state the engine could not
+otherwise reach honestly:
+
+- **Every action goes through the real rule.** `turning` pushes the Whisper
+  track to its threshold and lets `checkTurning` fire; `dusk` and "their turn"
+  apply a real `END_TURN` from the right seat rather than assigning
+  `activePlayer`, because the turn boundary is where the hand is swept, the
+  Revenant is granted its card and the deck recycles. A second implementation of
+  the hinge of the game is the last thing this project needs.
+- **`checkTurning` takes an optional `forceVessel`**, and the panel is its only
+  caller. Being the Vessel is the state hardest to reach by playing and the one
+  most worth testing.
+- **`vessel` is not a settable status.** It is the far side of the Turning — a
+  replaced deck, every Sign turned, the Street flipped — so assigning the tag
+  alone would produce a seat that is the Vessel by name and a posse member by
+  contents. `devStatus` refuses it **at runtime**, not only in the type: the
+  value arrives off a socket.
+- **`sit` is a swap.** The chair you leave is handed to a bot or the game stops
+  when the turn comes back to it, and the seat token follows the PERSON — a
+  token left pointing at the vacated chair is a live claim on a seat a bot is
+  now playing, and a refresh deals the tester somebody else's hand.
+
+**Not ported to the worker.** It rebuilds its game by replaying the command log,
+so a dev action that changes state has to be in that log or it evaporates at the
+next hibernation — which is why `turning` is logged and the other six are
+refused with a sentence rather than faked. Use `npm run serve:dev`. There is deliberately no way back from the Turning either — Signs are
 permanently Fevered and the Vessel is named — so "return to Act I" is a new deal,
 not an undo.
 
