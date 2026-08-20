@@ -30,6 +30,19 @@ export interface DuskReport {
   arrivals: DuskLine[];
   escalated: DuskLine[];
   tracks: DuskLine[];
+  /**
+   * Who leads the round that just began.
+   *
+   * The button moves one chair every Dawn, and the Dusk sheet is the one moment
+   * the whole table is looking at the same thing — so it is where the new order
+   * gets announced, rather than left for people to work out from whose turn it
+   * turned out to be.
+   *
+   * Read off the view, not the events: the Dusk batch carries the next round's
+   * start with it, so by the time this is built `firstPlayer` is already the
+   * new one.
+   */
+  next: DuskLine;
   /** Nothing happened at all — a quiet Dusk is worth saying out loud. */
   quiet: boolean;
 }
@@ -199,12 +212,20 @@ export function duskReport(
     });
   }
 
+  const leads = v.firstPlayer;
   return {
     round: v.round,
     menace,
     arrivals,
     escalated,
     tracks,
+    next: {
+      icon: 'street',
+      text: leads === seat
+        ? `Round ${v.round} — you lead`
+        : `Round ${v.round} — ${who(leads)} leads`,
+      yours: leads === seat,
+    },
     quiet: !menace.length && !arrivals.length && !escalated.length && !tracks.length,
   };
 }

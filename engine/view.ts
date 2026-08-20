@@ -24,6 +24,12 @@ export interface ClientState {
   act: GameState['act'];
   phase: GameState['phase'];
   activePlayer: PlayerId;
+  /**
+   * Who leads this round. Not the same as `activePlayer` for most of a round,
+   * and not a fixed seat either — `rotateStart` moves it one chair each Dawn,
+   * so the table has to be able to see where the button is.
+   */
+  firstPlayer: PlayerId;
   actionsLeft: number;
   /** The Whisper bar. Always in `[0, whisperThreshold)`. */
   whispers: number;
@@ -135,6 +141,7 @@ export function playerView(s: GameState, viewer: PlayerId | 'spectator'): Client
     viewer,
     round: s.round, act: s.act, phase: s.phase,
     activePlayer: s.activePlayer, actionsLeft: s.actionsLeft,
+    firstPlayer: s.turnOrder[s.startSeat] ?? s.turnOrder[0]!,
     whispers: s.whispers, whisperThreshold: s.tuning.whisperThreshold,
     whisperFills: s.whisperFills,
     nextFillDoom: doomForFill(s, s.whisperFills + 1),

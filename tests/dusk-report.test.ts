@@ -30,6 +30,49 @@ function duskBatches(seed: string) {
 }
 
 describe('the Dusk report', () => {
+  /*
+    Who leads the round that just began.
+
+    The button moves one chair every Dawn, and the Dusk sheet is the one moment
+    the whole table is looking at the same thing — so it is where the new order
+    is announced. Left out, a rotating turn order reads as a bug: people work
+    out whose turn it is by watching whose turn it turned out to be.
+  */
+  it('always says who leads the new round, and names the reader', () => {
+    let checked = 0;
+    for (const seed of ['dr-first-1', 'dr-first-2']) {
+      for (const { events, view } of duskBatches(seed)) {
+        const mine = duskReport(events, view, 'p0');
+        expect(mine.next.text, seed).toMatch(/^Round \d+ — /);
+        // Read off the view, so it is the round that has just STARTED.
+        expect(mine.next.text).toContain(`Round ${view.round} `);
+
+        const leads = view.firstPlayer;
+        if (leads === 'p0') {
+          expect(mine.next.text).toContain('you lead');
+          expect(mine.next.yours).toBe(true);
+        } else {
+          const them = view.opponents.find((o) => o.id === leads)!;
+          expect(mine.next.text).toContain(`${them.name} leads`);
+          expect(mine.next.yours).toBeFalsy();
+        }
+        checked++;
+      }
+    }
+    expect(checked, 'no Dusks to read').toBeGreaterThan(3);
+  });
+
+  it('says it even on a Dusk where nothing else happened', () => {
+    // Every other section vanishes when it is empty. This one never can: it is
+    // the only line about what happens NEXT rather than what just happened.
+    for (const seed of ['dr-quiet-1', 'dr-quiet-2']) {
+      for (const { events, view } of duskBatches(seed)) {
+        const r = duskReport(events, view, 'p0');
+        expect(r.next.text.length).toBeGreaterThan(8);
+      }
+    }
+  });
+
   it('accounts for every event a real Dusk produces', () => {
     let checked = 0;
     for (const seed of ['dr-1', 'dr-2', 'dr-3']) {

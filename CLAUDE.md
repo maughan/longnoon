@@ -78,6 +78,15 @@ door is not killing what is behind it.
 3. **Glossary lines about the side or the clock** — "Doom is the Old One's
    clock", "you win only if the Old One wins". The fiction, correctly.
 
+**The verdict screen says whether YOU won**, and that is a different question
+from which side did. `winner` is a side, and three seats at a losing table are
+on the winning one: the Marked player, the Vessel, and anybody who fell —
+including a seat that burned out, since only a Revenant can. The screen used to
+print "The long noon" to a traitor who had just pulled it off and leave them to
+work out that they had. `client/src/verdict.ts` holds the one function that
+decides it, out of the component and JSX-free so `tests/verdict.test.ts` can
+reach it from the root project.
+
 `tests/whispers.test.ts` enforces the rest: `state.vessel` and
 `status === 'vessel'` must always name the same seat, no client payload may
 contain `oldOne`, and no engine file may carry an `'oldOne'` status outside a
@@ -645,6 +654,24 @@ rather than by reasoning:
   player it was trying to skip. The trace read `p3@r2 p3@r3`.
 - **The button passes when the round ENDS.** In `beginRound` it also fired for
   the opening deal, so the first round of the game began on the second chair.
+
+### Saying where the button is
+
+Rotation is invisible unless the table can read it, and a turn order people work
+out by watching whose turn it turned out to be reads as a bug rather than a
+rule. Two places say it:
+
+- **`ClientState.firstPlayer`** — resolved from `startSeat` in `playerView`, and
+  a `first` chip on that seat in the rail. **A word, not a glyph**: every mark in
+  this game means something about a ROLE — Marked, the Vessel, a Revenant — and
+  a new one on a player would be read as a fourth of those in a game whose whole
+  tension is not knowing which people are which. Styled quiet for the same
+  reason; it is turn bookkeeping, not a secret coming out.
+- **A "Come morning" line on the Dusk sheet**, always shown where every other
+  section vanishes when empty — it is the only line on that page about what
+  happens NEXT. Read off the view rather than the events, because the Dusk batch
+  carries the next round's start with it, so `firstPlayer` is already the new one
+  by the time the report is built.
 
 **Two implementation notes worth not rediscovering:**
 

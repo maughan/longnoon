@@ -21,6 +21,7 @@ import type { Speed } from "../../server/protocol";
 import { useNet, roomFor, joinPlan, passport, type Net } from "./net";
 import { GLOSSARY, Rules, Term, Tooltips } from "./glossary";
 import { describeOps, cardKeywords, thirdLine } from "./cardText";
+import { wonWith } from "./verdict";
 import { nameOf as whoIs, type Beat } from "./beats";
 import { Icon, hasArt, type IconName } from "./components/Icon";
 import {
@@ -651,6 +652,22 @@ function Game({ net }: { net: Net }) {
       {v.winner && !readingBoard && (
         <div className="verdict">
           <h1>{v.winner === "posse" ? "The town holds" : "The long noon"}</h1>
+          {/*
+            Whether that was good news FOR YOU.
+
+            The headline names the side that won, and in a hidden-role game the
+            side that won is not the same question as whether you won. Three
+            seats at a losing table are on the winning side: the Marked player,
+            the Vessel, and anybody who fell. It said "The long noon" to a
+            traitor who had just pulled it off and left them to work out that
+            they had.
+
+            Safe to print here and nowhere earlier — roles are already public on
+            this screen, which is the whole point of the list underneath.
+          */}
+          <p className={`outcome ${wonWith(v) ? "won" : "lost"}`}>
+            {wonWith(v) ? "You win" : "You lose"}
+          </p>
           <p className="muted">
             {v.winner === "posse"
               ? "The Vessel is buried. Whatever it was, it is under the ground again."
@@ -847,6 +864,16 @@ function DuskSheet({
           {section("What arrived", report.arrivals)}
           {section("What got worse", report.escalated)}
           {section("The tracks", report.tracks)}
+          {/*
+            Last, and always shown.
+
+            Every other section disappears when it has nothing to say; this one
+            never has nothing to say, and it is the only line on the sheet about
+            what happens NEXT rather than what just happened. The button moves
+            one chair every Dawn, so leaving people to work out whose turn it
+            turned out to be is how a rotating order feels like a bug.
+          */}
+          {section("Come morning", [report.next])}
         </div>
 
         <div className="opts">
@@ -1645,6 +1672,7 @@ function Posse({
             >
               <div className="top">
                 <strong>{o.name}</strong>
+                {v.firstPlayer === o.id && <FirstChip />}
                 {bots.includes(o.id) && <BotTag />}
                 {/* One chip for what the seat IS — StatusChip covers the
                     Vessel now, so the separate "the Vessel" chip that used to
@@ -1724,6 +1752,29 @@ function vitalsTitle(p: {
   );
 }
 
+/**
+ * Where the button is.
+ *
+ * Turn order rotates one chair a round, so "who goes first" stopped being a
+ * fact about where you sat down and became a thing the table has to be able to
+ * read off the board.
+ *
+ * A word rather than a glyph, deliberately. Every mark in this game means
+ * something about a ROLE — Marked, the Vessel, a Revenant — and a new one on a
+ * player would be read as a fourth of those in a game whose whole tension is
+ * not knowing which people are which.
+ */
+function FirstChip() {
+  return (
+    <span
+      className="chip first"
+      title="Leads this round. The order moves one chair every Dawn."
+    >
+      first
+    </span>
+  );
+}
+
 /** What has become of someone, said once rather than in two places. */
 /**
  * What a seat IS, in one chip.
@@ -1787,6 +1838,7 @@ function SelfSeat({
     >
       <div className="top">
         <strong>You</strong>
+        {v.firstPlayer === me.id && <FirstChip />}
         {me.role === "marked" && (
           <span className="chip sign">
             <Icon name="marked" size={12} /> Marked

@@ -1860,3 +1860,28 @@ label {
   color: var(--ink);
   font-weight: 600;
 }
+
+/* Where the button is — see `FirstChip`.
+ *
+ * Deliberately quiet, and deliberately not one of the role colours. The Marked
+ * and Vessel chips are the loud ones because they are secrets coming out; this
+ * is a piece of turn bookkeeping and should read as furniture. */
+.chip.first {
+  border-color: var(--ink-mute);
+  color: var(--ink-mute);
+  letter-spacing: 0.14em;
+  font-variant-caps: small-caps;
+}
+
+/* "You win" / "You lose" on the verdict — see `wonWith`.
+ *
+ * Bigger than the flavour line under it and quieter than the headline: the
+ * headline is what happened to the town, this is what happened to you. */
+.verdict .outcome {
+  margin: 0.1rem 0 0.6rem;
+  font-size: 1.15rem;
+  letter-spacing: 0.16em;
+  font-variant-caps: small-caps;
+}
+.verdict .outcome.won { color: var(--lamp); }
+.verdict .outcome.lost { color: var(--blood); }
