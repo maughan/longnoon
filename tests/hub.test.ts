@@ -204,6 +204,94 @@ describe('the wire is untrusted', () => {
 });
 
 
+/*
+  Getting back into a chair after losing the token.
+
+  The report: a player dropped, tried to rejoin, and was told the room was FULL.
+  Every chair was accounted for — one of them theirs — and the seat token had
+  gone with the tab, so there was nothing left to prove the claim with. A full
+  room is exactly the state in which somebody needs to get back into their seat.
+*/
+describe('the passport', () => {
+  const seatOf = (out: Envelope[]) =>
+    (msgs(out, 'joined')[0]?.msg as { seat: string } | undefined)?.seat;
+
+  it('puts you back in your own chair when the room is full', () => {
+    const { hub, roomId } = opened({ seats: 3 });
+    const a = hub.handle('c0', { t: 'join', roomId, name: 'Ada', player: 'pass-a' }, 0);
+    hub.handle('c1', { t: 'join', roomId, name: 'Bo', player: 'pass-b' }, 0);
+    hub.handle('c2', { t: 'join', roomId, name: 'Cy', player: 'pass-c' }, 0);
+    // Dealt: after the deal a chair is only free if its player left no claim,
+    // which is what makes a dropped player's seat unjoinable by anyone else.
+    hub.handle('c0', { t: 'begin', marked: true }, 0);
+    const mine = seatOf(a)!;
+
+    // Ada's tab dies. Not `leave` and not `close` — the socket simply stops,
+    // which is the case the report came from.
+    hub.disconnect('c0', 0);
+
+    // Without a passport this is the reported failure, and it still is.
+    const stranger = hub.handle('c9', { t: 'join', roomId, name: 'Ada' }, 0);
+    expect((stranger[0].msg as { message: string }).message).toBe('Room is full');
+
+    // With one, the chair is hers.
+    const back = hub.handle('c8', { t: 'join', roomId, name: 'Ada', player: 'pass-a' }, 0);
+    expect(seatOf(back)).toBe(mine);
+    // And a working token, because the old one went with the tab.
+    const token = (msgs(back, 'joined')[0].msg as { token: string }).token;
+    expect(seatOf(hub.handle('c7', { t: 'rejoin', roomId, token }, 0))).toBe(mine);
+  });
+
+  it('is not a way into somebody else\'s chair', () => {
+    const { hub, roomId } = opened({ seats: 3 });
+    const a = hub.handle('c0', { t: 'join', roomId, name: 'Ada', player: 'pass-a' }, 0);
+    const b = hub.handle('c1', { t: 'join', roomId, name: 'Bo', player: 'pass-b' }, 0);
+    expect(seatOf(a)).not.toBe(seatOf(b));
+    // Bo comes back with his own passport and gets his own chair, not the
+    // first free one and not Ada's.
+    hub.disconnect('c1', 0);
+    const back = hub.handle('c5', { t: 'join', roomId, name: 'Bo', player: 'pass-b' }, 0);
+    expect(seatOf(back)).toBe(seatOf(b));
+  });
+
+  it('is released by leaving, so the next player cannot be turned out', () => {
+    /*
+      One owner per chair. Without the reverse cleanup a player who walked away
+      keeps a claim, and the person who takes the empty chair can be evicted by
+      the previous occupant simply pressing Join — which is worse than the bug
+      this whole mechanism exists to fix.
+    */
+    const { hub, roomId } = opened({ seats: 3 });
+    const a = hub.handle('c0', { t: 'join', roomId, name: 'Ada', player: 'pass-a' }, 0);
+    // Somebody else is here, or leaving would close an empty pre-game room.
+    hub.handle('c3', { t: 'join', roomId, name: 'Bo', player: 'pass-b' }, 0);
+    const chair = seatOf(a)!;
+    hub.handle('c0', { t: 'leave' }, 0);
+
+    const next = hub.handle('c1', { t: 'join', roomId, name: 'Cy', player: 'pass-c' }, 0);
+    expect(seatOf(next)).toBe(chair);
+
+    const ghost = hub.handle('c2', { t: 'join', roomId, name: 'Ada', player: 'pass-a' }, 0);
+    expect(seatOf(ghost)).not.toBe(chair);
+  });
+
+  it('never appears in anything the table is sent', () => {
+    // It is the credential for a seat and therefore for its hidden role.
+    const { hub, roomId } = opened({ seats: 3 });
+    const out = [
+      ...hub.handle('c0', { t: 'join', roomId, name: 'Ada', player: 'pass-secret' }, 0),
+      ...hub.handle('c1', { t: 'join', roomId, name: 'Bo', player: 'pass-b' }, 0),
+    ];
+    expect(JSON.stringify(out)).not.toContain('pass-secret');
+  });
+
+  it('still seats a client that has never had one', () => {
+    const { hub, roomId } = opened({ seats: 3 });
+    expect(seatOf(hub.handle('c0', { t: 'join', roomId, name: 'Ada' }, 0))).toBe('p0');
+    expect(seatOf(hub.handle('c1', { t: 'join', roomId, name: 'Bo' }, 0))).toBe('p1');
+  });
+});
+
 describe('development tools', () => {
   const view = (out: Envelope[], conn: string) =>
     (to(msgs(out, 'state'), conn)[0]?.msg as { view: { act: string } } | undefined)?.view;

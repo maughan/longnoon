@@ -28,7 +28,23 @@ export interface TableSeat {
 export interface ClientMsg {
   /** How many chairs to put out. Who fills them is decided at the table. */
   create: { seats: number; seed?: string };
-  join: { roomId: string; name: string };
+  /**
+   * Take a chair.
+   *
+   * `player` is a PASSPORT: an unguessable id the client keeps in local
+   * storage for good, sent with every join. It is what makes reconnecting
+   * survive the loss of a seat token — a room whose chairs are all spoken for
+   * answers "Room is full", and without a way to say "one of those chairs is
+   * mine" a player who lost their token could never get back in. Checked
+   * against the room's own seats BEFORE any search for a free chair.
+   *
+   * Optional, so a client that has never had one still joins normally.
+   *
+   * A bearer credential, like the seat token, and handled the same way: never
+   * broadcast, never in `TableSeat`, never derived from the game seed. Whoever
+   * holds it can take that chair and read its hidden role.
+   */
+  join: { roomId: string; name: string; player?: string };
   /** Reclaim a seat with the token issued on join. */
   rejoin: { roomId: string; token: string };
   command: { command: Command };

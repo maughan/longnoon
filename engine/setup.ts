@@ -99,6 +99,8 @@ export function setup(opts: SetupOptions): GameState {
     players,
     handsRevealedTo: {},
     beckoned: null,
+    startSeat: 0,
+    lastRoundActor: null,
     nextTurnGrit: {},
     shields: {},
     pending: null,

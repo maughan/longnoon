@@ -95,9 +95,12 @@ export const GLOSSARY: Record<string, Entry> = {
   menace: {
     term: 'Menace', also: ['menace'],
     short: 'What a Threat does to you at Dusk.',
-    long: 'At the end of every round each Threat still standing wounds one '
-      + 'player. It goes for whoever holds the most Signs, and the more they '
-      + 'hold the harder it hits. It never touches the Vessel.',
+    long: 'At the end of every round each Threat still standing wounds the '
+      + 'posse. It costs you cards off your deck — about half its Menace, '
+      + 'rounded up — and it goes for whoever holds the most Signs, hitting '
+      + 'harder the more they hold. It is dealt a card at a time, so if losing '
+      + 'a Sign costs you that lead the rest of it can land on somebody else. '
+      + 'It never touches the Vessel.',
   },
   toll: {
     term: 'Toll', also: ['toll'],

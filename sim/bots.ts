@@ -13,7 +13,7 @@
 // shared. If Puritan and Zealot differed in their combat logic too, the headline
 // number would be measuring the wrong thing.
 
-import type { Command, CardInstance, Target } from '../engine/state';
+import type { Command, CardInstance, Op, Target } from '../engine/state';
 import type { ClientState } from '../engine/view';
 import {
   opsFor, VESSEL_KEY, DECLINE_KEY, effectiveClear, effectiveMenace,
@@ -210,6 +210,34 @@ export const ZEALOT: BuyPolicy = {
   },
 };
 
+/**
+ * SAVER — the policy that only makes sense if Grit carries.
+ *
+ * Exists to answer a question the others cannot. Carry-over is worth almost
+ * nothing as leftover CHANGE — measured, the bots end a turn holding 0.03 Grit
+ * — because a bot cashes only what it needs for the card it has already picked.
+ * What carry-over actually buys is the ability to SAVE: to decline the card in
+ * front of you because a dearer one is two turns away. No other policy can
+ * express that, so without this one a measurement of `gritCarries` measures
+ * the change and calls it the strategy.
+ *
+ * It names the dearest Sign in the game whether or not it can afford it, so
+ * `buyStep` cashes towards it and buys nothing until it can. With carry that is
+ * patience; without it, it is throwing a card away every turn — which is the
+ * contrast the comparison needs.
+ */
+export const SAVER: BuyPolicy = {
+  name: 'Saver',
+  playsSign: worthTheWhispers,
+  pick: (v, _b, r) => {
+    // Budget deliberately ignored — that is the whole policy.
+    const all = SIGN_IDS.map((id) => ({ id, cost: card(id).cost ?? 0, isSign: true }))
+      .sort((a, b) => b.cost - a.cost);
+    void v;
+    return dearest(all, r);
+  },
+};
+
 export const GREEDY: BuyPolicy = {
   name: 'Greedy',
   playsSign: worthTheWhispers,
@@ -358,6 +386,59 @@ function resolvePending(view: ClientState, legal: Command[]): Command {
     }
   }
   /*
+    Which card comes back out of a boneyard.
+
+    The options are card UIDs, so none of the branches above match them and
+    this used to fall through to `legal[0]` — the oldest thing in the pile,
+    which is the very behaviour the choice was added to replace. The bot would
+    have gone on measuring the old rule under the new one.
+
+    Ranked the way a player would: something that shoots first, then whatever
+    is worth the most Grit.
+  */
+  /*
+    Which Provision to take off the shelf for a Bounty.
+
+    The options are row UIDs, so none of the branches above match them and this
+    would fall through to `legal[0]` — the leftmost card, which is exactly the
+    rule the choice replaced. Ninth time a mechanic would have gone on
+    measuring its own predecessor.
+
+    Ranked the way a player would: something that shoots, then the dearest
+    thing on the shelf, since a Bounty is free and the expensive card is the one
+    you would not otherwise have bought.
+  */
+  if (view.pending?.op === 'gainCard') {
+    const row = view.provisionRow.filter((ci) => opts.some((o) => o.key === ci.uid));
+    const ranked = [...row].sort((a, b) => {
+      const da = damageOf(a), db = damageOf(b);
+      if (da !== db) return db - da;
+      return (card(b.cardId).cost ?? 0) - (card(a.cardId).cost ?? 0);
+    });
+    for (const ci of ranked) {
+      const cmd = pickKey(ci.uid);
+      if (cmd) return cmd;
+    }
+  }
+
+  if (view.pending?.op === 'recover') {
+    const byUid = new Map(
+      opts.map((o) => [o.key, o.key]),
+    );
+    const pool = [...(view.you?.boneyard ?? []), ...view.opponents.flatMap((o) => o.boneyard)]
+      .filter((ci) => byUid.has(ci.uid));
+    const ranked = pool.sort((a, b) => {
+      const da = damageOf(a), db = damageOf(b);
+      if (da !== db) return db - da;
+      return card(b.cardId).grit - card(a.cardId).grit;
+    });
+    for (const ci of ranked) {
+      const cmd = pickKey(ci.uid);
+      if (cmd) return cmd;
+    }
+  }
+
+  /*
     Come and See: the least-corrupted seat.
 
     The aim is to spread Signs, not to deepen someone already lost — a player
@@ -382,6 +463,35 @@ function resolvePending(view: ClientState, legal: Command[]): Command {
     if (mine) return mine;
   }
   return legal[0];
+}
+
+/**
+ * A card that is worth nothing in the VESSEL's hand. Two kinds, and the second
+ * is the one that is easy to miss.
+ *
+ *   1. It works for the posse — clears the Street, silences a Threat, shields
+ *      somebody. Playing it is doing the enemy's work.
+ *   2. It only wounds the VESSEL, which is this seat. `choiceOptions` never
+ *      offers a player itself as a damage target, so the op cannot resolve —
+ *      but the card's appended cost still does, and those faces trash a card
+ *      off the deck by design. Playing one spends an action to pay a price for
+ *      nothing.
+ *
+ * Aimed, because the Vessel aims its own Fevered cards and that is the version
+ * it would actually resolve.
+ */
+function deadForTheVessel(ci: { cardId: string; fevered: boolean }): boolean {
+  const ops = opsFor(card(ci.cardId), ci.fevered, true);
+  if (!ops.length) return false;
+  const inert = (op: Op) =>
+    op.op === 'destroy'
+    || op.op === 'damage'          // at the Street, or at a Vessel that is us
+    || op.op === 'cancelMenace'
+    || op.op === 'shield'
+    || op.op === 'banishOmen';
+  // Not "every op is inert" — a card that also draws or whispers is worth the
+  // action. Dead means nothing on it does anything for this seat.
+  return ops.every((op) => inert(op) || op.op === 'trash');
 }
 
 /**
@@ -501,6 +611,61 @@ function markedMove(
   return endTurn(legal);
 }
 
+/**
+ * Buy something, or cash a card in towards it. The only step that differs
+ * between policies — and the reason it is a function of its own.
+ *
+ * Buying costs no action by default (`buyCostsAction`), so this has to be
+ * reachable from a turn with no actions left as well as from the middle of
+ * one. It was inline in the turn loop, below a guard that ended the turn the
+ * moment `actionsLeft` hit zero, which meant the free purchase was legal and
+ * no bot ever made one. That is the seventh time a mechanic has "done nothing"
+ * because of the bots; the fix is that there is now exactly one buy step and
+ * both callers reach it.
+ */
+function buyStep(
+  view: ClientState, legal: Command[], policy: BuyPolicy, rand: () => number,
+): Command | null {
+  const you = view.you;
+  if (!you || you.status !== 'posse') return null;
+  const ts = threats(view);
+  const bury = view.act === 'mythos' && view.vessel !== null;
+  /*
+    What you would cash in rather than play.
+
+    The `opsFor().length === 0` clause is doing more work than it looks:
+    it is "this card has no effect worth keeping". Giving a blank card ANY
+    effect used to drop it out of this list entirely, and since nothing
+    played it either, the card became unspendable and unplayable at once —
+    purchases fell by two thirds and every arm of the Saddlebag experiment
+    measured identically, because the bot had stopped touching the card in
+    both directions.
+
+    There is no such card in the set today — the experiment that produced
+    this note concluded against adopting one — but the shape of the trap is
+    worth keeping: if a card ever gains an effect that can always WAIT, it
+    needs a clause here as well as somewhere that plays it, or it silently
+    becomes untouchable in both directions.
+  */
+  const spendable = you.hand.filter(
+    (ci) =>
+      card(ci.cardId).grit > 0 &&
+      (opsFor(card(ci.cardId), ci.fevered).length === 0 ||
+        selfHarming(ci) ||
+        (damageOf(ci) > 0 && ts.length === 0 && !bury) ||
+        (isDefensive(ci) && !ts.some((t) => t.menace > 0)) ||
+        (card(ci.cardId).type === 'sign' && !policy.playsSign(view, ci))),
+  );
+  const budget = you.grit + spendable.reduce((n, ci) => n + card(ci.cardId).grit, 0);
+  const target = policy.pick(view, budget, rand);
+  if (!target) return null;
+  const buy = legal.find((c) => c.t === 'BUY' && c.cardId === target);
+  if (buy) return buy;
+  // Not enough Grit in hand yet: cash a card. Spending costs no action.
+  const best = spendable.sort((a, b) => card(b.cardId).grit - card(a.cardId).grit)[0];
+  return (best && legal.find((c) => c.t === 'SPEND_GRIT' && c.uids[0] === best.uid)) ?? null;
+}
+
 // ---------------------------------------------------------------- the bot
 
 export function makeBot(policy: BuyPolicy): Bot {
@@ -513,7 +678,11 @@ export function makeBot(policy: BuyPolicy): Bot {
     if (you.status === 'revenant') {
       return fallenMove(view, legal);
     }
-    if (view.actionsLeft <= 0) return endTurn(legal);
+    // Out of actions is not out of turn: buying is free, so the last thing a
+    // posse seat does is spend what it earned.
+    if (view.actionsLeft <= 0) {
+      return buyStep(view, legal, policy, rand) ?? endTurn(legal);
+    }
 
     /*
       The traitor, after the Turning. Their side is the Old One's, and the
@@ -538,10 +707,42 @@ export function makeBot(policy: BuyPolicy): Bot {
       here would be the bespoke action menu growing back inside the bot.
     */
     if (you.status === 'vessel') {
-      const mine = you.hand.find((ci) =>
+      /*
+        "Every card in that deck is worth playing" stopped being true when the
+        deck stopped being only Vessel cards.
+
+        The Vessel keeps its own Signs at the Turning, and 37% of its deck is
+        them — Fevered Colts and Dynamite that CLEAR THE STREET. Playing those
+        is the Vessel doing the posse's work: measured at 95 Threats destroyed
+        by the Vessel across 150 games before this branch existed, and 182 plays
+        whose whole effect helps the table it is hunting.
+
+        Held back rather than ranked. The seat cannot cash them in either, so a
+        posse-facing Sign in that hand is simply a dead card — which is the
+        thing `vesselKeepsSigns` exists to ask about.
+      */
+      const useful = you.hand.filter((ci) => !deadForTheVessel(ci));
+      const mine = useful.find((ci) =>
         legal.some((c) => c.t === 'PLAY_CARD' && c.uid === ci.uid));
       const cmd = mine && legal.find((c) => c.t === 'PLAY_CARD' && c.uid === mine.uid);
-      return cmd ?? endTurn(legal);
+      if (cmd) return cmd;
+      /*
+        Nothing worth playing — burn the corruption instead.
+
+        Posse-facing Signs FIRST, because those are the dead ones: they cannot
+        be played without helping the table and cannot be cashed in. A Sign that
+        does something to the posse is worth holding for the turn it is worth
+        playing, so it is burned only when nothing else is left.
+      */
+      const burnable = legal.filter((l) => l.t === 'BURN_SIGN');
+      if (burnable.length) {
+        const dead = burnable.find((l) => {
+          const ci = you.hand.find((h) => h.uid === (l as { uid: string }).uid);
+          return ci && deadForTheVessel(ci);
+        });
+        return dead ?? burnable[0]!;
+      }
+      return endTurn(legal);
     }
 
     /*
@@ -586,43 +787,9 @@ export function makeBot(policy: BuyPolicy): Bot {
 
     // C. Buy — the only step that differs between policies. Buying is also
     //    healing (DESIGN.md §5), so it stays a high priority.
-    if (you.status === 'posse') {
-      /*
-        What you would cash in rather than play.
-
-        The `opsFor().length === 0` clause is doing more work than it looks:
-        it is "this card has no effect worth keeping". Giving a blank card ANY
-        effect used to drop it out of this list entirely, and since nothing
-        played it either, the card became unspendable and unplayable at once —
-        purchases fell by two thirds and every arm of the Saddlebag experiment
-        measured identically, because the bot had stopped touching the card in
-        both directions.
-
-        There is no such card in the set today — the experiment that produced
-        this note concluded against adopting one — but the shape of the trap is
-        worth keeping: if a card ever gains an effect that can always WAIT, it
-        needs a clause here as well as somewhere that plays it, or it silently
-        becomes untouchable in both directions.
-      */
-      const spendable = you.hand.filter(
-        (ci) =>
-          card(ci.cardId).grit > 0 &&
-          (opsFor(card(ci.cardId), ci.fevered).length === 0 ||
-            selfHarming(ci) ||
-            (damageOf(ci) > 0 && ts.length === 0 && !bury) ||
-            (isDefensive(ci) && !ts.some((t) => t.menace > 0)) ||
-            (card(ci.cardId).type === 'sign' && !policy.playsSign(view, ci))),
-      );
-      const budget = you.grit + spendable.reduce((n, ci) => n + card(ci.cardId).grit, 0);
-      const target = policy.pick(view, budget, rand);
-      if (target) {
-        const buy = legal.find((c) => c.t === 'BUY' && c.cardId === target);
-        if (buy) return buy;
-        // Not enough Grit in hand yet: cash a card. Spending costs no action.
-        const best = spendable.sort((a, b) => card(b.cardId).grit - card(a.cardId).grit)[0];
-        const spend = best && legal.find((c) => c.t === 'SPEND_GRIT' && c.uids[0] === best.uid);
-        if (spend) return spend;
-      }
+    {
+      const cmd = buyStep(view, legal, policy, rand);
+      if (cmd) return cmd;
     }
 
     // D. Card advantage.
@@ -688,6 +855,7 @@ export const POLICIES: Record<string, Bot> = {
   Zealot: makeBot(ZEALOT),
   Balanced: makeBot(BALANCED),
   Marked: makeBot(MARKED),
+  Saver: makeBot(SAVER),
   ...Object.fromEntries(
     BALANCED_RATIOS.map((r) => [`Bal${Math.round(r * 100)}`, makeBot(balanced(r))]),
   ),

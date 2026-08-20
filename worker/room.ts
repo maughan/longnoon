@@ -222,7 +222,7 @@ export class GameRoomObject extends Server<Env> {
       case "create":
         return this.#create(conn, msg.seats, msg.seed);
       case "join":
-        return this.#join(conn, msg.name);
+        return this.#join(conn, msg.name, msg.player);
       case "rejoin":
         return this.#rejoin(conn, msg.token);
       case "seat":
@@ -275,23 +275,59 @@ export class GameRoomObject extends Server<Env> {
     this.#broadcastTable(next);
   }
 
-  async #join(conn: Connection<ConnState>, name: string): Promise<void> {
+  async #join(
+    conn: Connection<ConnState>, name: string, player?: string,
+  ): Promise<void> {
     const { meta } = await this.#load();
     if (!meta) return this.#err(conn, "No such room");
     if (conn.state?.seat) return this.#err(conn, "Already seated");
 
-    const free = meta.begun
+    /*
+      Your own chair, before any question of whether the room is full.
+
+      The report: a player dropped, came back, and was told the room was full —
+      every chair accounted for, one of them theirs, and the seat token gone
+      with the tab. A full room is precisely when somebody needs to get back
+      into their seat, so the claim is checked before the search rather than
+      after it fails. See `ClientMsg['join']` for what a passport is.
+    */
+    const mine = player
+      ? meta.seats.find((s) => s.player && s.player === player)
+      : undefined;
+    const free = mine ?? (meta.begun
       ? meta.seats.find(
           (s) => s.kind === "human" && !s.token && !this.#driven(s.id),
         )
-      : meta.seats.find((s) => s.kind === "open");
+      : meta.seats.find((s) => s.kind === "open"));
     if (!free) return this.#err(conn, "Room is full");
 
     const token = crypto.randomUUID();
     free.kind = "human";
     free.name = name;
     free.token = token;
+    /*
+      One owner per chair.
+
+      The reverse cleanup matters as much as the claim: a player who left a
+      chair keeps a claim on it otherwise, and the next person to sit down can
+      be turned out of it by the previous occupant pressing Join.
+    */
+    if (player) {
+      for (const s of meta.seats) if (s.player === player) s.player = null;
+      free.player = player;
+    }
     await this.#putMeta(meta);
+    /*
+      A live connection on this seat is somebody's dead tab — refusing would
+      make recovery depend on a timeout nobody can see. Last claim wins, and
+      the stale one is unseated so it cannot go on acting as this chair.
+    */
+    for (const other of this.ctx.getWebSockets()) {
+      const c = other as unknown as Connection<ConnState>;
+      if (c !== conn && c.state?.seat === free.id) {
+        c.setState({ ...c.state, seat: null, token: null });
+      }
+    }
     conn.setState({ seat: free.id, token, hits: conn.state?.hits ?? [] });
 
     this.#send(conn, {
@@ -632,7 +668,12 @@ function parse(raw: unknown): Inbound | null {
     case "create":
       return typeof m.seats === "number" ? (m as Inbound) : null;
     case "join":
-      return str("name") ? (m as Inbound) : null;
+      // `player` is optional but must be a string if present: it is compared
+      // against stored seats, and `undefined === undefined` would match every
+      // chair nobody has claimed.
+      return str("name") && (m.player === undefined || str("player"))
+        ? (m as Inbound)
+        : null;
     case "rejoin":
       return str("token") ? (m as Inbound) : null;
     case "command":

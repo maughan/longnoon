@@ -117,9 +117,41 @@ describe('no chronicle entry tells a player something their view does not', () =
           */
           const board = new Set(allowed);
           for (const e of out.events) {
+            /*
+              `PLAYED` and `BOUGHT` are the table watching you.
+
+              Both are broadcast to everybody by `visibleEvents`, so the
+              allowance matches the protocol rather than widening it. They are
+              here because a card can leave the public piles in the same breath
+              it entered one: play a card, draw into an empty deck, and `refill`
+              shuffles your discard — that card included — back into a deck
+              `playerView` does not publish. The name was public when it was
+              said and unfindable a moment later.
+            */
             if ('cardId' in e && typeof e.cardId === 'string'
               && ['THREAT_CLEARED', 'THREAT_ENTERED', 'TOLL_PAID',
-                'VESSEL_DAMAGE_RESET'].includes(e.t)) {
+                'VESSEL_DAMAGE_RESET', 'PLAYED', 'BOUGHT',
+                // A Threat that menaces or escalates is standing in the Street
+                // while it does it. It can then be shoved out of its slot by
+                // the next arrival in the same batch — see the note on
+                // `MENACE.cardId` — which leaves the name unfindable a moment
+                // after everybody watched it happen.
+                'MENACE', 'ESCALATED'].includes(e.t)) {
+              board.add(card(e.cardId).name);
+            }
+            /*
+              What YOU scried, you know — you paid a Sign to look at it.
+
+              It sits on top of the Threat deck, which `knowable` cannot see
+              into by design, so the name looks unearned to the rule above even
+              though `visibleEvents` sends this event to its actor and nobody
+              else. Mirrors that filter exactly: actor only.
+
+              Latent until the Menace change shifted the RNG path and walked a
+              game into it. The permutation lesson again — a randomised test
+              only finds what its seeds happen to reach.
+            */
+            if (e.t === 'SCRIED' && e.player === viewer) {
               board.add(card(e.cardId).name);
             }
           }

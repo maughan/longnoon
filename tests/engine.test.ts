@@ -1,13 +1,28 @@
 import { describe, it, expect } from 'vitest';
-import { setup, start, apply, legalCommands, playerView } from '../engine';
+import { setup as rawSetup, start, apply, legalCommands, playerView } from '../engine';
 import { shuffle, randAt } from '../engine/rng';
 import {
   opsFor, signsHeld, newInstance, damagePlayer, effectiveClear, effectiveMenace,
 } from '../engine/effects';
-import { card } from '../content/cards';
+import { card, ALL_CARDS } from '../content/cards';
 import type { GameState, Command, PlayerId, GameEvent } from '../engine/state';
 
-const base = () => setup({ seed: 'noon', players: ['Ada', 'Bo', 'Cy'], markedIndex: 1 });
+/*
+  Every `setup` in this file runs with the two board-rewriting rules OFF.
+
+  `refillNoClearable` deals a Threat when the Street holds nothing clearable and
+  `rotateStart` moves who begins the round. Both are on by default and both are
+  correct — and both rewrite a hand-built board or turn order underneath a test
+  that was about something else. A test whose SUBJECT is either rule passes it
+  in `tuning`, which wins: the spread below puts the caller's values last.
+*/
+const STEADY = { refillNoClearable: false, rotateStart: false } as const;
+const setup: typeof rawSetup = (opts) =>
+  rawSetup({ ...opts, tuning: { ...STEADY, ...opts.tuning } });
+
+
+const base = (tuning: Record<string, unknown> = {}) =>
+  setup({ seed: 'noon', players: ['Ada', 'Bo', 'Cy'], markedIndex: 1, tuning });
 
 function play(s: GameState, cmds: [PlayerId, Command][]): GameState {
   let cur = s;
@@ -373,6 +388,169 @@ describe('legality', () => {
   it('rejects buying without Grit', () => {
     const s = start(base()).state;
     expect(() => apply(s, s.activePlayer, { t: 'BUY', cardId: 'colt' })).toThrow();
+  });
+
+  /*
+    Grit is the limit on buying, not actions — `buyCostsAction`, off.
+
+    Asserted at ZERO actions specifically. Every other test buys in the middle
+    of a turn, where the two rules are indistinguishable: the difference only
+    shows once the actions are spent, which is exactly the state a bot used to
+    end its turn in without ever trying.
+  */
+  it('buys with no actions left, and does not spend one', () => {
+    const s = start(base()).state;
+    const me = s.activePlayer;
+    s.players[me].gritThisTurn = 20;
+    s.actionsLeft = 0;
+
+    const offered = legalCommands(s, me);
+    expect(offered.some((c) => c.t === 'BUY' && c.cardId === 'colt')).toBe(true);
+    // Playing a card still costs one, so an empty turn is not a free turn.
+    expect(offered.some((c) => c.t === 'PLAY_CARD')).toBe(false);
+
+    const r = apply(s, me, { t: 'BUY', cardId: 'colt' });
+    expect(r.state.actionsLeft).toBe(0);
+    // Wherever a purchase lands is `buyToHand`'s business, not this test's.
+    const got = [...r.state.players[me].hand, ...r.state.players[me].discard];
+    expect(got.some((ci) => ci.cardId === 'colt')).toBe(true);
+  });
+
+  it('charges an action for a purchase when the tuning says to', () => {
+    const opening = setup({
+      seed: 'buy-costs', players: ['Ada', 'Bo', 'Cy'],
+      tuning: { buyCostsAction: true },
+    });
+    const s = start(opening).state;
+    const me = s.activePlayer;
+    s.players[me].gritThisTurn = 20;
+    const before = s.actionsLeft;
+    expect(apply(s, me, { t: 'BUY', cardId: 'colt' }).state.actionsLeft)
+      .toBe(before - 1);
+
+    s.actionsLeft = 0;
+    expect(legalCommands(s, me).some((c) => c.t === 'BUY')).toBe(false);
+  });
+
+  /*
+    The price on the card is the price you pay.
+
+    From a playtest: "a card was bought from the market but it seemed to cost
+    more Grit than stated". This is the half of that question the engine can
+    answer — every purchasable card, both acts, charged exactly `cost` and
+    nothing else. (The other half was the client sending the same BUY twice
+    before the first answer arrived; see `Net.play`.)
+  */
+  it('charges exactly the printed cost, for every card that has one', () => {
+    const priced = ALL_CARDS.filter((c) => c.cost !== undefined);
+    expect(priced.length).toBeGreaterThan(10);
+
+    for (const def of priced) {
+      for (const act of ['trouble', 'mythos'] as const) {
+        const s = start(base()).state;
+        s.act = act;
+        const me = s.activePlayer;
+        // A Provision has to be on the shelf to be bought at all.
+        if (def.type !== 'sign') s.supply.provisionRow = [newInstance(s, def.id)];
+        s.players[me].gritThisTurn = 99;
+
+        const r = apply(s, me, { t: 'BUY', cardId: def.id });
+        expect(
+          99 - r.state.players[me].gritThisTurn,
+          `${def.name} in ${act}`,
+        ).toBe(def.cost);
+      }
+    }
+  });
+
+  /*
+    `buyToHand`, and the loop it opens.
+
+    Five cards cash in for exactly what they cost — hard-tack, debt, certainty,
+    stake-claim, coyote, all 2 for 2 — and neither buying nor cashing spends an
+    action. Bought straight into hand, buy-and-sell-back is therefore free and
+    unbounded, and PROFITABLE while Beckoned: `beckonGrit` pays for buying a
+    Sign and three of the five are Signs.
+
+    It hung the simulator before the guard existed, which is the friendliest
+    way this could have been found.
+  */
+  describe('buying into your hand', () => {
+    const opening = () => setup({
+      seed: 'to-hand', players: ['Ada', 'Bo', 'Cy'],
+      tuning: { buyToHand: true },
+    });
+
+    it('puts the card where you can use it', () => {
+      const s = start(opening()).state;
+      const me = s.activePlayer;
+      s.players[me].gritThisTurn = 9;
+      const r = apply(s, me, { t: 'BUY', cardId: 'colt' });
+      expect(r.state.players[me].hand.some((ci) => ci.cardId === 'colt')).toBe(true);
+      expect(r.state.players[me].discard.some((ci) => ci.cardId === 'colt')).toBe(false);
+    });
+
+    it('will not let you sell it back the same turn', () => {
+      const s = start(opening()).state;
+      const me = s.activePlayer;
+      s.players[me].gritThisTurn = 9;
+      const bought = apply(s, me, { t: 'BUY', cardId: 'certainty' }).state;
+      const uid = bought.players[me].hand.find((ci) => ci.cardId === 'certainty')!.uid;
+      expect(legalCommands(bought, me)
+        .some((c) => c.t === 'SPEND_GRIT' && c.uids.includes(uid))).toBe(false);
+
+      // Next round it is an ordinary card again.
+      bought.round += 1;
+      expect(legalCommands(bought, me)
+        .some((c) => c.t === 'SPEND_GRIT' && c.uids.includes(uid))).toBe(true);
+    });
+
+    it('leaves the ordinary rule alone', () => {
+      // Off, a purchase goes to the discard and nothing is stamped.
+      const s = start(base({ buyToHand: false })).state;
+      const me = s.activePlayer;
+      s.players[me].gritThisTurn = 9;
+      const r = apply(s, me, { t: 'BUY', cardId: 'colt' });
+      const got = r.state.players[me].discard.find((ci) => ci.cardId === 'colt')!;
+      expect(got.boughtRound).toBeUndefined();
+    });
+  });
+
+  /*
+    Drawing the next hand at the END of your turn.
+
+    The cards are the same cards; what changes is when you see them, so a player
+    can plan while the rest of the table takes its turns.
+  */
+  describe('drawAtEndOfTurn', () => {
+    it('leaves a full hand on the table when the turn passes', () => {
+      const s = start(base({ drawAtEndOfTurn: true })).state;
+      const me = s.activePlayer;
+      const r = apply(s, me, { t: 'END_TURN' });
+      expect(r.state.players[me].hand).toHaveLength(r.state.tuning.handSize);
+      expect(r.state.activePlayer).not.toBe(me);
+    });
+
+    it('draws nothing extra when the turn comes back round', () => {
+      // `startTurn` still tops up, which is what deals the opening hand and
+      // refills one that damage emptied. It must not deal a SECOND hand.
+      let s = start(base({ drawAtEndOfTurn: true })).state;
+      const me = s.activePlayer;
+      for (let i = 0; i < 12 && s.activePlayer !== me; i++) {
+        s = apply(s, s.activePlayer, { t: 'END_TURN' }).state;
+      }
+      s = apply(s, me, { t: 'END_TURN' }).state;
+      for (let i = 0; i < 12 && s.activePlayer !== me; i++) {
+        s = apply(s, s.activePlayer, { t: 'END_TURN' }).state;
+      }
+      expect(s.players[me].hand.length).toBeLessThanOrEqual(s.tuning.handSize);
+    });
+
+    it('off, the hand is empty between turns', () => {
+      const s = start(base()).state;
+      const me = s.activePlayer;
+      expect(apply(s, me, { t: 'END_TURN' }).state.players[me].hand).toHaveLength(0);
+    });
   });
 
   it('every command legalCommands returns is actually applicable', () => {

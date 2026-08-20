@@ -43,6 +43,14 @@ interface Room {
   lobby: Lobby | null;
   /** token -> seat. Issued on join, required to reclaim. */
   tokens: Map<string, PlayerId>;
+  /**
+   * Passport -> seat. The claim that survives losing a token.
+   *
+   * Never sent to anyone. A seat's passport is the credential for that seat and
+   * therefore for its hidden role, so it lives here and nowhere a payload can
+   * reach it.
+   */
+  passports: Map<string, PlayerId>;
   /** seat -> the connection currently driving it, if any. */
   conns: Map<PlayerId, string>;
   /**
@@ -237,7 +245,7 @@ export class Hub {
     if (!msg) return [err(conn, 'Malformed message')];
     switch (msg.t) {
       case 'create': return this.create(conn, msg, now);
-      case 'join': return this.join(conn, msg.roomId, msg.name, now);
+      case 'join': return this.join(conn, msg.roomId, msg.name, now, msg.player);
       case 'rejoin': return this.rejoin(conn, msg.roomId, msg.token, now);
       case 'command': return this.command(conn, msg.command, now);
       case 'vote': return this.vote(conn, msg.seat, msg.choice, now);
@@ -272,6 +280,7 @@ export class Hub {
       })),
       lobby: null,
       tokens: new Map(),
+      passports: new Map(),
       conns: new Map(),
     });
     void now;
@@ -336,9 +345,30 @@ export class Hub {
     return this.deliver(room, room.lobby.room.deal(), now);
   }
 
-  private join(conn: string, roomId: string, name: string, now: number): Envelope[] {
+  private join(
+    conn: string, roomId: string, name: string, now: number, passport?: string,
+  ): Envelope[] {
     const room = this.rooms.get(roomId);
     if (!room) return [err(conn, 'No such room')];
+
+    /*
+      Your own chair first, before any question of whether the room is full.
+
+      The report this exists for: a player dropped, could not rejoin, and was
+      told the room was full — because every chair was accounted for and their
+      seat token had gone with the tab. A full room is exactly the state in
+      which somebody needs to get back INTO their seat, so the claim has to be
+      checked before the search, not after it fails.
+
+      A live connection on that seat is not a reason to refuse. The common case
+      is the player's own dead socket, which the server has not noticed yet;
+      refusing would make recovery depend on a timeout nobody can see. Last
+      claim wins, and the stale connection is dropped.
+    */
+    const mine = passport ? room.passports.get(passport) : undefined;
+    if (mine && room.seats.some((s) => s.id === mine)) {
+      return this.reseat(conn, room, mine, name, now, passport!);
+    }
 
     // Before the deal you take an empty chair; after it, only a seat whose
     // player has gone and left no claim on it.
@@ -348,6 +378,7 @@ export class Hub {
       )
       : room.seats.find((s) => s.kind === 'open');
     if (!free) return [err(conn, 'Room is full')];
+    this.claimSeat(room, free.id, passport);
 
     free.kind = 'human';
     free.name = name;
@@ -367,6 +398,64 @@ export class Hub {
         host: room.host === free.id, speed: room.speed,
       } },
       ...(room.lobby ? this.syncAll(room) : this.tableFor(room)),
+    ];
+  }
+
+  /**
+   * A chair has one owner. Point this passport at it and drop any other.
+   *
+   * The reverse cleanup is the part that matters: without it, a player who
+   * left a chair keeps a claim on it, and the next person to sit there can be
+   * evicted by the previous occupant simply pressing Join.
+   */
+  private claimSeat(room: Room, seat: PlayerId, passport?: string): void {
+    for (const [p, id] of [...room.passports]) {
+      if (id === seat) room.passports.delete(p);
+    }
+    if (passport) room.passports.set(passport, seat);
+  }
+
+  /**
+   * Put a returning player back in the chair their passport names.
+   *
+   * Deliberately the same shape as `rejoin`: a fresh token, the connection
+   * remapped, presence restored. The difference is only what proved the claim.
+   */
+  private reseat(
+    conn: string, room: Room, seat: PlayerId, name: string, now: number,
+    passport: string,
+  ): Envelope[] {
+    const chair = room.seats.find((s) => s.id === seat)!;
+    chair.kind = 'human';
+    chair.name = name;
+    if (room.lobby) {
+      room.lobby.room.reclaim(seat);
+      room.lobby.room.seat(seat)!.name = name;
+    }
+    // The old socket, if any, is somebody's dead tab. Drop the session so it
+    // cannot go on acting as this seat.
+    const stale = room.conns.get(seat);
+    if (stale && stale !== conn) this.sessions.delete(stale);
+
+    // One live token per chair. The old one went with the tab that lost it, and
+    // leaving it valid would let a recovered browser act as a seat somebody
+    // else is now holding.
+    for (const [t, id] of [...room.tokens]) if (id === seat) room.tokens.delete(t);
+    const token = this.newId();
+    room.tokens.set(token, seat);
+    this.claimSeat(room, seat, passport);
+    room.conns.set(seat, conn);
+    this.sessions.set(conn, { roomId: room.id, seat });
+    const events = room.lobby?.reconnect(seat, now) ?? [];
+    room.host ??= seat;
+
+    return [
+      { conn, msg: {
+        t: 'joined', roomId: room.id, seat, token, dev: this.devTools,
+        host: room.host === seat, speed: room.speed,
+      } },
+      ...(room.lobby ? this.syncAll(room) : this.tableFor(room)),
+      ...this.lobbyEvents(room, events),
     ];
   }
 
@@ -652,6 +741,9 @@ export class Hub {
       for (const [token, seat] of room?.tokens ?? []) {
         if (seat === session.seat) room!.tokens.delete(token);
       }
+      // And the passport claim. Walking away has to release the chair for
+      // good, or the person who takes it next can be turned out of it.
+      if (room) this.claimSeat(room, session.seat);
     }
     return out;
   }
@@ -803,7 +895,12 @@ function parse(raw: unknown): Inbound | null {
       // or every create is rejected as malformed.
       return typeof m.seats === 'number' ? (m as Inbound) : null;
     case 'join':
-      return str('roomId') && str('name') ? (m as Inbound) : null;
+      // `player` is optional — a client that has never had a passport still
+      // joins — but if it is there it has to be a string, because it is used
+      // as a Map key and `undefined` would collide every anonymous join into
+      // one seat claim.
+      return str('roomId') && str('name')
+        && (m.player === undefined || str('player')) ? (m as Inbound) : null;
     case 'rejoin':
       return str('roomId') && str('token') ? (m as Inbound) : null;
     case 'command':

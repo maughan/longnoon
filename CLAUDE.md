@@ -153,12 +153,9 @@ abstraction is failing and should be reconsidered rather than extended. A test
 
 ## Open rulings — these are design decisions, not bugs
 
-**Damage vs. Signs (blocking).** The paper rules contradict themselves. One line
-says damage trashes "Provisions and Kit before Signs"; another says Signs can
-never be trashed at all. Taken literally, the second makes a fully corrupted
-player immortal. Currently implemented as: non-Signs first, then Signs once
-nothing else remains. This decides whether Sign-heavy play is self-limiting or
-dominant — resolve before playtesting.
+**Damage vs. Signs — RULED, and the numbers are below** (`blindDamage: false`).
+Non-Signs first, then Signs once nothing else remains. See "Blind damage was
+tried and rejected".
 
 **Revenant turn position.** Before or after living players? Changes how much
 information they act on. Currently: in original turn order.
@@ -191,6 +188,99 @@ II Threats to 12 overflow evictions and never got a legal bury in 91% of games.
 Dropping the gate took that to 0%. The other half of the same paper line — damage
 resets to 0 if an Omen enters — survives; set `omensBlockBurial: true` to restore
 the gate for comparison.
+
+## A prompt that offers cards shows the cards
+
+`PendingChoice.options` carries `cardId` when an option stands for a card, and
+the client draws the face instead of a button.
+
+The detection used to be "are the keys card ids", which worked only for prompts
+that offer cards BY ID — A GIFT, FREELY GIVEN's Sign list. Everything keyed by
+**uid** fell through to a column of buttons: scry, recover, and a Provision off
+the shelf. A pile can hold two of the same card, so those have to be keyed by
+uid — "a Saddlebag" is not an instruction when four are lying there — which
+meant the key could never carry the identity as well.
+
+Scrying was the worst of the three, and it is what got this noticed: a card you
+paid a Sign to look at, shown to you as its name in a box.
+
+**No leak.** `playerView` sends `pending` only to the player it belongs to, and
+that player is already being told the card's name.
+
+**Slot prompts deliberately still render as buttons.** Those name Threats in the
+Street, which is on the board behind the prompt — four more faces would be the
+same cards twice.
+
+## A Bounty Provision is chosen, and the shelf refills behind it
+
+`gainCard` from the Provision row did `shift()` — the leftmost card, which is
+arrival order and reads as a dice roll. Same ruling as `recover` and `trash`
+before it: a rule you can see is a rule you can play around, one you cannot is
+just a card arriving. It now asks, keyed by uid because the row can hold two of
+the same card.
+
+**And it refills the row afterwards, which it did not.** `BUY` always has; a
+Bounty quietly shrank the shelf for the rest of the game. Four Act I Threats pay
+one, so a table that cleared well ended up shopping from a SHORTER shelf than a
+table that did not — the exact opposite of what a Bounty is for. The Provision
+deck is the finite thing (`provisionCount`); the row is a window onto it.
+
+**`chosen` means two different things in that op** and the comment says so: a
+row uid for the Provision case, a player id otherwise. They cannot both be in
+flight because no card asks for both — one that did would need `gift`'s
+two-prompt shape, with the first answer stored on the op.
+
+**Measured: 3.1 prompts a game, and about +3pp.** Balanced 51.8% -> 54.7%,
+mixed 34.0% -> 38.2%. Unlike most of today's small results these move the SAME
+way, which is what a real effect looks like rather than noise — and it should,
+since both halves help the posse: a chosen card beats the leftmost one, and the
+refill puts more Provisions on the table over a game.
+
+**Worth a retune if it stands.** Balanced at 54.7% is at the top of the band,
+and `vesselClear` 15 -> 16 is the lever — it measured 50.4% earlier under
+`buyToHand`, though that was before the Omen Tolls.
+
+**The bot needed the branch.** Row uids match none of `resolvePending`'s cases,
+so it would have fallen through to `legal[0]` — the leftmost card, which is the
+rule being replaced. Ninth time a mechanic would have gone on measuring its own
+predecessor.
+
+## Omens name a price now
+
+Dynamite was the only answer to an Omen in the game, so a table that had not
+bought one had no play at all: **39.3% of games ended with an Omen still
+standing** (same seeds, measured immediately before this change). An Omen cannot
+be cleared, cannot be pushed out since overflow stopped discarding, and does not
+even escalate — it just sits in a slot, menacing and dripping Whispers, and it
+is most of what "nothing to do on my turn" turns out to mean.
+
+Each Omen now carries a **Toll**, through the machinery Act II Threats already
+used — DESIGN.md §7's third line, `Card.toll` and `PAY_TOLL`, and
+`legalCommands` only ever offers one the player can actually meet.
+
+**Three Omens, three currencies, deliberately:**
+
+| Omen | price |
+|---|---|
+| Dead Cattle, No Wounds | **3 Grit** — the plain price, costs only the turn |
+| The Well Tastes Like Pennies | **a Scar** — Dynamite's bargain: clear the dread by taking on more |
+| The Preacher Won't Come Out | **burn a Sign** — the mirror of what the Vessel does with them |
+
+Which Omen is cheap depends on how you have been playing. A Puritan holds no
+Sign to burn and a Zealot always does — and because the prices differ, no way of
+playing locks you out of every Omen in the game. There is a test for exactly
+that.
+
+**Measured, 150 games: 2.03 Omen Tolls paid per game, and games ending with an
+Omen standing fall 39.3% -> 22.0%.** Balance is unmoved — Balanced 55.6% ->
+51.8% and mixed 32.0% -> 34.0%, opposite directions again, which is noise and
+not an effect. That is the right result: an action plus a real price for each
+Omen is counterplay, not a gift.
+
+**`payGrit` is a new op**, and the reason is `canPay`. A Toll is only offered
+when it can be met, so the price has to be something the checker can inspect
+before the button is drawn — a negative `grit` would have been a price it could
+not see.
 
 ## The Colt is depth, Dynamite is breadth
 
@@ -294,6 +384,54 @@ than any one number should.
 Watch the other rows while you do: early deaths sit at **72%**, which predates
 all of this and is tracked under "Still open: falls are early now".
 
+## Buying costs no action (`buyCostsAction: false`)
+
+The turn separates into the two halves a deck builder usually has: actions do
+things to the board, Grit buys. Cashing in never cost an action either, so this
+finishes a split that was already half made.
+
+**It is the largest single change in the tuning so far.** 120 games a cell,
+same-policy tables with a Marked seat:
+
+| | Balanced | Greedy | Zealot | Puritan | mixed |
+|---|---|---|---|---|---|
+| buying costs an action | 28.3% | 30.0% | 2.5% | 0.0% | 14.2% |
+| **buying is free** | **49.2%** | 43.3% | **26.7%** | 0.0% | **39.2%** |
+
+Signs bought go 19.5 -> 26.1 on a mixed table, the Turning fires in 82.5% of
+games against 52.5%, and it lands a round earlier (7.2 -> 6.0). Fewer games
+stall in Act I, which is a real gain; the posse also wins nearly three times as
+often, which is not obviously one.
+
+**Watch the corruption curve — it flattened.** DESIGN.md §2's central test wants
+an interior optimum, and the shape it used to have (0.15 -> 44.0%, 0.50 ->
+40.8%, 1.00 -> 19.2%) is most of the argument that the design works. Measured
+again with buying free, 120 games an arm:
+
+| Puritan | Bal15 | Bal30 | Bal50 | Bal70 | Greedy | Zealot |
+|---|---|---|---|---|---|---|
+| 0.0% | 37.5% | 40.0% | 40.0% | 38.3% | **45.0%** | 22.5% |
+
+Greed stopped being punished. **The action cost was part of the brake**: a Sign
+bought used to cost tempo as well as Grit, and without that the greedy line no
+longer pays for itself — Zealot goes 2.5% -> 26.7% and Greedy now edges every
+Balanced arm. At n=120 the noise is about ±4.5pp so the Bal arms are a flat
+band rather than four distinct numbers, but the direction is well outside it.
+
+**If this needs rebalancing, `vesselClear` is the lever**, as ever — it is what
+decides how long Act II runs. The numbers above are the "before" for whatever
+that sweep turns out to be, and none of it has been retuned.
+
+**And re-sweep `balanced(ratio)` if you do.** Its default is measured, not
+chosen, and it is expressed as a fraction of `whisperThreshold` — the same
+warning that already applies to retuning the threshold applies here, because
+this changes what a Sign costs in practice.
+
+**The bot needed the other half of this.** `makeBot` ended the turn the moment
+`actionsLeft` hit zero, so the free purchase was legal and no bot ever made one.
+The buy step is now `buyStep()` and both callers reach it — the seventh time a
+mechanic has "done nothing" because of the bots.
+
 ## The starting deck is 12, not 8, and the padding is the lever
 
 `STARTING_DECK` is an 8-card list. `startingDeckSize` is **12**. `setup` fills
@@ -375,6 +513,607 @@ Two things worth keeping from the run:
 **Third independent confirmation that a card with an effect is not an attack**
 (after the Canteen padding arm and the Canteen substitution arm). The
 blank-card theory is wrong on its own; dead hands are attack density.
+
+## "Nothing to do on my turn" is a SEAT problem
+
+From a playtest, and the second telling of it is the one that matters: by the
+time the round reaches the last player the table in front of them has cleared
+the Street, so all they can do is sell cards and pass — **and it is the same
+person every round, because turn order is fixed for the whole game.**
+
+Averaged over all posse turns this is invisible. Split by seat it is glaring.
+4 players, 150 games:
+
+| seat | turns | nothing clearable in the Street | only sell/buy |
+|---|---|---|---|
+| p0 (first) | 903 | 0.9% | 0.7% |
+| p1 | 1306 | 4.7% | 1.6% |
+| p2 | 1330 | 17.7% | 3.9% |
+| **p3 (last)** | 1271 | **33.2%** | **6.7%** |
+
+A 37x spread across the table, owned by whoever sat down last, for the whole
+game. **The bots are the WEAK instrument here** — they spread damage and
+misplay, where a table talking to each other clears the Street more thoroughly,
+so a real game is worse than this.
+
+### Ruled: rotate the start of the round (`rotateStart`)
+
+`startSeat` moves one chair each Dawn. Measured, same 150 games:
+
+| seat | p0 | p1 | p2 | p3 |
+|---|---|---|---|---|
+| nothing clearable, fixed | 0.9% | 4.7% | 17.7% | 33.2% |
+| **rotating** | 17.5% | 11.1% | 13.1% | 15.7% |
+| only sell/buy, fixed | 0.7% | 1.6% | 3.9% | 6.7% |
+| **rotating** | 1.7% | 3.1% | 3.5% | 3.7% |
+
+Flat. The worst seat goes from a third of its turns with nothing to clear to a
+sixth, and from 6.7% to 3.7% of turns spent selling and passing.
+
+**Balance cost: none measurable.** Three blocks of 150 games — Balanced 47.8%
+both ways, Puritan 0.4% both ways, mixed 41.1% -> 39.1%. Zealot reads 27.1% ->
+21.8% (31/25/25 against 19/21/25), which overlaps and is not resolvable at this n.
+
+### Rotation shares the problem out; refilling removes it — measured together
+
+`refillNoClearable` is the stronger version of the refill idea, aimed at the
+number that hurts rather than at the empty board: a Threat arrives when the
+Street holds nothing that can be CLEARED. 120 games for the seat figures, 300
+each for the win rates:
+
+| | nothing clearable | by seat (p0..p3) | worst seat idle | Balanced | mixed |
+|---|---|---|---|---|---|
+| as-is | 14.1% | 0 / 4 / 15 / **34** | 5.7% | 56.0% | 43.0% |
+| rotate | 15.2% | 17 / 12 / 15 / 18 | 4.6% | 52.0% | 40.3% |
+| **refill-noclearable** | **2.1%** | 1 / 1 / 2 / 4 | 2.8% | **43.3%** | **29.0%** |
+| both | 1.6% | 2 / 1 / 1 / 1 | 2.8% | 37.0% | 27.7% |
+
+**They fix different things and the numbers say so.** Rotation moves the
+problem around the table and leaves the total alone (14.1% -> 15.2%). Refilling
+takes the total out — 14.1% -> 2.1% — and flattens the seats as a side effect,
+because a Street that is never bare is never bare for the last player either.
+
+**Refilling is not free.** Balanced -12.7pp, mixed -14.0pp: every refill is
+another Threat menacing at Dusk and, in Act II, another point of Doom. It is a
+difficulty change and wants `vesselClear` brought down to pay for it. Rotation
+costs somewhere between nothing and 4pp — two separate runs put it at 0.0 and
+4.0, which at these block sizes is one number that cannot be resolved.
+
+### Committed: both rules on, `vesselClear` 12 -> 11
+
+Re-measured against the FIXED rotation, three blocks of 150 plus 450 mixed:
+
+| `vesselClear` | Balanced | mixed |
+|---|---|---|
+| **11** | **51.3%** (52/51/51) | 36.9% |
+| 12 | 42.9% (41/45/42) | 32.4% |
+| 13 | 38.4% (40/35/40) | 28.7% |
+
+11, against a pre-change baseline of ~48%. Zealot sits at 26.9% and Puritan at
+0%, so DESIGN.md §2's test passes with room.
+
+**The earlier sweep of this same grid read 43.6% at 11 and is superseded.** It
+ran before the double-turn fix, and free double turns for the Vessel were worth
+about 8pp to the Old One. A balance number measured across a rules bug is a
+number for a game nobody is playing.
+
+**Turning these on cost 19 test failures**, and that is the honest price of a
+rule that rewrites the board at the start of a turn. Most were fixtures built by
+hand and then perturbed — `tests/engine.test.ts` and `tests/actii.test.ts` now
+shadow `setup` so every fixture in them runs with both rules OFF, and a test
+whose SUBJECT is either rule turns it back on in `tuning`. Two were real, and
+are the bugs listed above.
+
+**Rotation redistributes; it does not reduce.** If the goal is FEWER such turns
+rather than a fair share of them, refilling is the answer and the retune is the
+price. The underlying cause is Omen counterplay — an Omen cannot be cleared, so
+a Street holding one is a Street with less to do, and Dynamite is the only
+answer in the game.
+
+**The Vessel and a thinned table**, both tested in `tests/actii.test.ts`:
+
+- **The Vessel rotates like anybody else.** Worth stating because that seat is
+  special in every other way — it cannot buy, cannot be Menaced, wins by a
+  different condition — but its POSITION is not special. Rotating means the
+  advantage of acting after the whole posse, summoning into a Street they can no
+  longer answer, stops belonging permanently to whichever seat was named at the
+  Turning.
+- **`startSeat` walks over gone seats too**, and a round that begins on an empty
+  chair still reaches Dusk: `advance` ends the round when the turn comes back to
+  whoever began it, and a gone seat hands straight on rather than ending
+  anything. Every living seat still takes exactly one turn a round with half the
+  table gone.
+
+### Nobody takes two turns across a Dusk
+
+Raised from the table before it was ever played: with the posse down to one
+player and the Vessel, rotating by one hands the seat that acted LAST the next
+round's first turn — three actions, the sun goes down, three more, and nothing
+in between. Correct, and worse than reported: it also happens at three seats the
+moment one of them falls, so a rule counting living players would not catch it.
+
+Stated as the thing that is actually wrong instead: **the round may not begin
+with whoever ended the last one.** At two seats that resolves to "do not
+rotate", which is right — with two players there is no rotation that does not
+double somebody — and it falls out rather than being special-cased.
+
+Two bugs found writing this, both in `rotateStart` and both caught by a trace
+rather than by reasoning:
+
+- **Step past the RESOLVED seat, not the raw index.** With two living seats
+  either side of a gone one, `startSeat + 1` resolves forward onto the very
+  player it was trying to skip. The trace read `p3@r2 p3@r3`.
+- **The button passes when the round ENDS.** In `beginRound` it also fired for
+  the opening deal, so the first round of the game began on the second chair.
+
+**Two implementation notes worth not rediscovering:**
+
+- **`turnOrder` is never rotated.** A seat's index is its identity in several
+  places — `markedIndex` at setup, and `sim/run.ts` maps a seat index to its
+  policy on every single decision — so rotating the array would quietly hand a
+  player somebody else's policy halfway through a game. `startSeat` is an index
+  into a list that never moves.
+- **`advance` ends the round when the turn comes back to whoever began it**,
+  rather than at the end of the array. With `startSeat` at 0 that is exactly the
+  old rule, so rotation needs no second code path.
+
+## The empty Street was not it (`refillEmptyStreet`)
+
+The first proposal for the above: if the Street is empty when a turn begins, deal
+a Threat. Implemented as `refillEmptyStreet` (TUNING, **off**) through
+`drawThreat` + `enterStreet`, so an arrival this way is an ordinary arrival —
+same deck, same recycling, same overflow rule — and it lands BEFORE the draw, or
+a card whose only op needs a target is unplayable on the turn it arrives.
+
+**It costs nothing and it changes nothing.** Three blocks of 150 games a cell:
+
+| | Balanced | Zealot | Puritan | mixed |
+|---|---|---|---|---|
+| off | 48.4% | 26.7% | 0.4% | 44.7% |
+| on | 48.4% | 26.7% | 0.4% | 44.0% |
+
+Not "within noise" — the per-block numbers are nearly identical (45/48/52
+against 45/49/51). The rule fires too rarely to perturb anything.
+
+### What the turns actually look like, 4,724 posse turns
+
+| | share of turns |
+|---|---|
+| Street empty at turn start | **0.7%** |
+| Street holds nothing CLEARABLE | **13.9%** |
+| No attack in hand | **21.3%** |
+| No card playable at all | 3.6% |
+| Nothing to do but buy or end | 3.5% |
+
+**The empty Street is not the problem — it is 0.7% of turns.** The two that
+matter are a hand with no attack in it, and a Street whose Threats cannot be
+cleared at all: an Omen, or an Act II card with no Clear value. In that second
+case an attack is still LEGAL — damage lands on an Omen, it just achieves
+nothing, since an Omen can never be cleared — so `hasLiveTarget` does not
+withhold it and the player spends an action learning that.
+
+**That 13.9% is where the feeling comes from, and it is the one worth fixing.**
+Two candidate directions, neither measured: exclude Omen-only Streets from
+`hasLiveTarget` for `damage` and `destroy` (careful — damage on a
+`noClearWhileOmen` Threat is banked, not wasted, so it is only the pure Omen
+slot that is dead), or give the posse more answers to an Omen than Dynamite.
+
+`refillEmptyStreet` is left in and off. It is free, and it does guarantee a
+board to act against; it just cannot deliver the feeling it was proposed for.
+
+## Buying into your hand: simulated, and it is a different game
+
+`buyToHand` (TUNING, **off**) puts a purchase in your hand instead of your
+discard — a tool you can use this turn rather than a promise about a future
+shuffle. Simulated, not adopted.
+
+### It opened a loop, and the simulator found it by hanging
+
+**Five cards cash in for exactly what they cost** — hard-tack, debt, certainty,
+stake-claim and coyote, all 2 for 2 — and **neither buying nor cashing spends an
+action**. Bought straight into hand, buy-and-sell-back is therefore free and
+unbounded. Beckoned it is unbounded and *profitable*: `beckonGrit` pays for
+buying a Sign, and three of the five are Signs.
+
+The bots oscillated forever and the run never finished. That is the friendliest
+possible way to find it — a human would never press it, right up until one did.
+
+The guard is `CardInstance.boughtRound`: a card bought into a hand cannot be
+cashed the turn it was bought. Set only under `buyToHand`, so the default rule
+is untouched, and it reads as a plain sentence — what you bought is yours to
+use, not to sell back.
+
+**This is worth remembering even if `buyToHand` never ships.** Free buying plus
+free cashing means any future rule that makes a purchase reachable in the same
+turn reopens it.
+
+### Measured, 150 games a cell
+
+| | Balanced | Greedy | Zealot | Puritan | Bal15 | Bal70 | mixed |
+|---|---|---|---|---|---|---|---|
+| to discard | 48.0% | 44.7% | 33.3% | 0.7% | 53.3% | 44.7% | 45.3% |
+| **to hand** | **74.7%** | 64.0% | 34.0% | 0.0% | **70.7%** | 50.7% | **60.0%** |
+
+**Fewer Signs bought, far more games won** — 37.1 -> 28.9 purchases for Balanced,
+28.6 -> 23.0 on a mixed table. A Winchester bought is a Threat cleared *now*, so
+purchases convert to board impact immediately and the posse needs fewer of them.
+Games are shorter (10.1 -> 9.2 rounds) and the Turning comes sooner.
+
+**The corruption curve gets STEEPER, in the right direction.** Bal15 beats Bal70
+by 20pp, against 8.6pp today, and **Zealot does not move at all** (33.3 ->
+34.0). The extreme corruption line gains nothing from immediacy — it was already
+buying every Sign it could — while the disciplined line gains a great deal. That
+is DESIGN.md §2's shape improving, which is the opposite of what free buying did
+to it.
+
+### Swept: `vesselClear` 15 is where it lands
+
+120 games a cell, `buyToHand: true` throughout. **Nothing committed** — TUNING
+still reads `buyToHand: false, vesselClear: 12`.
+
+| `vesselClear` | Balanced | Greedy | Zealot | Puritan | Bal15 | Bal70 | mixed |
+|---|---|---|---|---|---|---|---|
+| 12 | 74.2% | 58.3% | 37.5% | 0.8% | 71.7% | 62.5% | 55.8% |
+| 14 | 57.5% | 45.0% | 19.2% | 0.8% | 60.8% | 50.8% | 36.7% |
+| **15** | **51.7%** | 38.3% | 21.7% | 0.0% | 55.8% | 37.5% | 37.5% |
+| 16 | 43.3% | 35.8% | 18.3% | 0.0% | 56.7% | 35.0% | 36.7% |
+
+**15**, because it puts Balanced at 51.7% — next to the 48.0% it scores today at
+`vesselClear: 12` with purchases going to the discard — and DESIGN.md §2's test
+passes with room: neither extreme near 55%, Balanced comfortably above both.
+
+The interior optimum is **wider than it is today**, at every value: Bal15 beats
+Bal70 by 18pp at 15 and by 22pp at 16, against 8.6pp on current tuning. That is
+the thing worth having from this change; the win rate is just a dial.
+
+**Read the two columns separately.** Balanced points at 15-16 and the mixed
+table points at 13 — 14, 15 and 16 all sit at ~37% mixed against 45.3% today.
+Mixed tables carry Puritan and Zealot, who gain nothing from immediacy, so the
+same change lands differently on them. The same-policy comparison is what
+DESIGN.md §2 tests and what has always been the headline here; mixed is the
+sanity check, and ~37% is inside the band it has historically occupied.
+
+### CORRECTION: `Balanced` and `Bal15` are the same policy
+
+`balanced(ratio = 0.15)` and `BALANCED = balanced()`, so `POLICIES.Balanced`
+and `POLICIES.Bal15` take identical parameters. Every "Bal15 beats the default
+ratio" gap reported while sweeping `buyToHand` — 60.8 vs 57.5, 55.8 vs 51.7,
+56.7 vs 43.3 — was **two runs of one policy under different seeds**. The last
+pair is exactly the kind of outlier the block-variance work below turned up.
+
+The default ratio had already been moved to 0.15 before that sweep. So the
+ratio sweep CONFIRMS the shipped default rather than calling for a change, and
+the "recommended trio" was really a pair.
+
+**The lesson is the same one as the outlier block:** two cells of a grid that
+differ by a few points are not two results. Here they were not even two
+configurations.
+
+### Swept: the ratio confirms 0.15, and the second number was re-derived
+
+`balanced(ratio)` was re-swept under the new rule, 150 games a cell at
+`vesselClear: 15`:
+
+| ratio | 0.00 (Puritan) | **0.15** | 0.30 | 0.50 | 0.70 | 1.00 (Zealot) |
+|---|---|---|---|---|---|---|
+| posse win | 0.0% | **58.7%** | 48.0% | 48.0% | 44.0% | 16.0% |
+
+A clean interior optimum at **0.15** — steep off zero, a gentle decline to 0.70,
+a cliff at 1.00. Better separated than the current tuning, and the third time
+the measured default has turned out not to be the set one.
+
+Then `vesselClear` again against the NEW default, because the two interact:
+
+| `vesselClear` | Bal15 | Zealot | games |
+|---|---|---|---|
+| 15 | 55.2% | — | 900 |
+| **16** | **45.3%** | 15.1% | 450 |
+| 17 | 43.8% | 13.1% | 450 |
+
+**16**, as the closest match to the 48.0% Balanced scores today, with Zealot at
+15.1% and Puritan at 0% either side of it.
+
+### A methodological note worth more than the numbers
+
+One 150-game cell in the closing grid read **46.7%** for a configuration whose
+true value is **55.2%** — a 2.7σ block, and it would have sent `vesselClear`
+a full point the wrong way. Six blocks of the same config run 51.3 / 60.0 / 52.7
+/ 56.7 / 56.7 / 54.0, so the blocks themselves are well behaved (sd 3.2pp
+against a binomial 4.1pp); there is nothing pathological here, just enough cells
+in a grid that one of them was always going to be an outlier.
+
+**A single 150-game cell cannot resolve a 5pp difference, and most of this
+project's sweeps are 5pp differences.** The fix is what was done here: anchor
+the cells that decide something on several blocks, and treat a lone cell as a
+direction rather than a value. `sim/FINDINGS.md` already reports sd across
+blocks for the Colt targeting work for exactly this reason.
+
+### Committed: `buyToHand: true`, `vesselClear` 11 -> 15
+
+Re-swept against the rules as they now stand — rotation, refill and the
+double-turn fix all landed after the first grid, so `vesselClear: 16` from it
+was stale. Three blocks of 150 plus 450 mixed:
+
+| | Balanced | Zealot | mixed |
+|---|---|---|---|
+| before (no `buyToHand`, vc 11) | 49.8% (45/51/53) | 29.1% | 36.2% |
+| **`buyToHand`, vc 15** | **53.1%** (53/51/56) | 17.8% | **35.8%** |
+| `buyToHand`, vc 16 | 50.4% (49/51/51) | 13.1% | 28.9% |
+| `buyToHand`, vc 17 | 40.2% (41/40/39) | 8.9% | 25.6% |
+
+**The two columns disagree and 15 is the call.** 16 matches Balanced almost
+exactly (50.4 against 49.8) and costs a mixed table 7pp; 15 keeps the mixed
+table where it was (35.8 against 36.2) and lifts Balanced 3.3pp. A mixed table
+is the closer model of four people at a table, and Zealot at 17.8% is still a
+line somebody could try — at 13.1% it stops being one.
+
+**Zealot falls much harder here than it did in isolation** (29.1% -> 17.8%),
+where the first measurement had it flat. Immediacy is worth most to a deck that
+buys tools and least to one buying every Sign it can, and against the current
+rules that gap is bigger. The corruption curve steepening is the thing worth
+having from this change.
+
+## The Vessel's kept Signs are mostly bricks
+
+Raised from the table: the Vessel holds cards reading "destroy a Threat" that do
+nothing. Measured over 150 games — the deck it gets at the Turning averages
+**15.9 cards of which 37% are Signs**, and Signs are **45% of everything it
+plays**.
+
+Most Signs face the STREET. A Fevered Colt in that hand destroys a Threat *for
+the posse*; a Salt Line shields somebody it is hunting. The seat cannot cash a
+card in either — that rule exists because Grit buys from a market the Vessel has
+no access to — so a posse-facing Sign there does nothing, or worse than nothing.
+
+### The bots were playing them, and that is a measurement error
+
+`makeBot`'s Vessel branch said "every card in that deck is worth playing when
+drawn", which was true when the deck was only Vessel cards. Measured before the
+fix: **95 Threats destroyed BY THE VESSEL across 150 games**, and 182 plays
+whose whole effect helps the table it is hunting. The branch now holds back any
+card whose ops are entirely posse-facing. Costs the posse about 1pp, so every
+number above it in this file is that much generous.
+
+Eighth time a mechanic has behaved wrongly because of the bots.
+
+### `vesselKeepsSigns`, measured
+
+Off, each kept Sign is exchanged for another card from `vesselDeck` — same
+count, so "a corrupt Act I makes a fatter Vessel" survives, but every card in
+the deck does something to the table rather than for it.
+
+| | Balanced | Zealot | mixed |
+|---|---|---|---|
+| keeps (current) | 52.7% (52/55/51) | 16.9% | 34.4% |
+| trades | 51.6% (52/53/50) | 16.9% | 29.6% |
+
+Free on same-policy tables, -4.8pp for the posse on a mixed one — bigger there
+because Greedy and Zealot buy more Signs, so a Vessel drawn from those seats has
+more to trade.
+
+### Built: `BURN_SIGN` — the Vessel burns a Sign for a Whisper
+
+The chosen answer, and the one that keeps the flavour: your Last Words really is
+in there, and the Old One burns it. A Sign-heavy Act I now literally arms the
+Old One's Act II, which is what the kept Signs were always reaching for.
+
+- **Its own command**, not a second meaning for `REVENANT_WHISPER` or
+  `SPEND_GRIT`. The three are the same gesture and three different economies — a
+  Revenant spending its own life, a posse member turning a card into money, the
+  Old One burning the corruption that made it. One field doing two jobs is the
+  mistake this project has already made twice with the Whisper track.
+- **Signs only.** The Old One's own cards are not corruption to burn, and
+  letting the seat feed the track with them would make Whispers something it
+  prints rather than something the table handed over.
+- **To the boneyard, not the discard.** The Vessel's deck is rebuilt from what
+  is left (`refill` — that deck does not run out), so a discard would deal the
+  same brick back round.
+- **Through `addWhispers`**, so the Act II rate multiplies it and a fill pays
+  Doom like any other. Not a side channel around the track.
+
+### What it is worth, and an overstatement corrected
+
+**The bots burn in 21 of 120 games, 0.3 times a game.** The reason is the
+correction: 37% of the deck being Signs does NOT mean 37% of turns are blocked.
+The Vessel draws five and has three actions, and 63% of that deck is its own
+cards — so there is almost always something live to play, and the bricks clog
+rather than block. The earlier framing overstated it.
+
+Balance effect is not distinguishable from noise. Across the bot fix and both
+versions of the dead-card test, Balanced reads 52.7 -> 55.3 -> 55.6 and mixed
+34.4 -> 33.3 -> 32.0 — drifting in OPPOSITE directions, which is what noise
+looks like and not what an effect looks like.
+
+**So this is a feel fix, which is what it was asked for.** A human holding a
+Fevered Colt they can never point at anything now has something to do with it.
+
+**The bot needed the wider test.** "Helps the posse" missed the second kind of
+dead card: a Sign whose damage only reaches the VESSEL, which is this seat —
+`choiceOptions` never offers a player itself as a damage target, so the op
+cannot resolve, but the appended cost still trashes a card off the deck. Playing
+one spends an action to pay a price for nothing. `deadForTheVessel` covers both.
+
+`vesselKeepsSigns` stays ON: with an outlet, kept Signs are fuel rather than
+paper, which is the whole point. The trade-in remains as the alternative.
+
+## Drawing at the end of your turn (`drawAtEndOfTurn`)
+
+The next hand is drawn when your turn ENDS rather than when it begins, so it is
+on the table while everybody else plays and you can think about it then. The
+cards are the same cards; only the moment you see them changes. Dominion draws
+this way for the same reason.
+
+**Free, measured.** Three blocks of 150 plus 450 mixed:
+
+| | Balanced | Zealot | mixed | rounds |
+|---|---|---|---|---|
+| off | 51.8% (50/51/55) | 26.9% | 38.0% | 9.2 |
+| on | 54.4% (53/55/56) | 28.0% | 35.3% | 8.8 |
+
++2.6pp same-policy and -2.7pp mixed, both about one block sd. No change in
+wipes either way.
+
+**The interaction to watch was real and did not bite.** Damage trashes off your
+DECK, so a deck that has already paid out five cards is five cards nearer empty
+when Dusk lands on you — falls and wipes were the thing to look for, and neither
+moved.
+
+`startTurn` still tops up to `handSize`, and that is deliberate rather than
+redundant: it deals the OPENING hand, and refills one that damage emptied
+between turns. Once the end-of-turn draw has run it is a no-op. The draw happens
+before `advance`, so a Revenant who burns out on it is already `gone` when the
+turn moves on.
+
+## Grit carrying over: measured, and it is close to a no-op
+
+`gritCarries` (TUNING, **off**) makes unspent Grit survive the end of your turn
+instead of evaporating. Simulated rather than adopted; the switch is left in.
+
+**The mechanic is nearly inert, and one number says why.** Across 4,566 posse
+turns the bots ended a turn holding **0.03 Grit** on average — 3.1% of turns
+had any leftover at all, never more than 1, never 3 or more. There is no change
+to keep, because a player cashes towards the card they have already chosen and
+stops. Every win rate moves accordingly, 200 games a cell:
+
+| | Balanced | Greedy | Zealot | Puritan | Bal15 | Bal70 | mixed |
+|---|---|---|---|---|---|---|---|
+| evaporates | 52.0% | 43.5% | 36.0% | 0.5% | 45.5% | 41.5% | 41.0% |
+| carries | 51.5% | 46.5% | 34.0% | 0.5% | 49.0% | 41.0% | 45.0% |
+
+Signs bought is flat (36.6 -> 36.7; mixed 28.9 -> 29.0), the Turning lands on
+the same round, games run the same length. At n=200 a cell (sd ~3.5pp) nothing
+here is outside noise.
+
+### The half a simulation cannot answer, and the instrument built for it
+
+Carry-over is not really about change. It is about **saving** — declining the
+card in front of you because a dearer one is two turns away — and no policy
+could express that, so a naive measurement measures the change and calls it the
+strategy. `SAVER` exists for this: it names the dearest Sign in the game whether
+or not it can afford it, so `buyStep` cashes towards it and buys nothing until
+it can. With carry that is patience; without it, it throws a card away every
+turn.
+
+| | Saver | Balanced |
+|---|---|---|
+| evaporates | 16.5% | 54.0% |
+| carries | **6.5%** | 49.5% |
+
+**Saving gets WORSE when saving becomes possible**, and the reason is in the
+same row: Saver's Signs go 33.0 -> 43.1. Carry-over lets it execute its plan,
+and its plan is to buy the dearest Signs — which is the corruption line the
+design punishes. So carry does not unlock a strategy the game was missing; it
+makes an existing losing line easier to reach.
+
+Saver is a blunt instrument — it loses heavily in both arms, so it measures a
+direction rather than a value — and it only ever saves towards SIGNS. A version
+saving for the dearest Provision would be a different experiment, but Provisions
+are cheap and finite and the expensive cards in this game are Signs.
+
+**Recommendation: leave it off.** It costs a rule to explain, changes no
+measurable outcome, and what it does enable points the wrong way.
+
+## "It cost more Grit than it said" — one press, one command
+
+From a playtest. The engine was not the problem: `BUY` deducts `def.cost` and
+nothing else, and `tests/engine.test.ts` now proves it for **every purchasable
+card in both acts** — the price on the shelf, on the button and in the reducer
+are all the same number.
+
+**The client was sending the same command twice.** `net.play` fired straight
+down the socket with no guard, and a card in the market sheet is bought by
+clicking the card — so a double-click, which is a natural gesture on a card in a
+modal, sent two `BUY` commands before the answer to the first arrived. Two BUYs
+are two legal purchases at full price each, and the second card lands in a
+discard nobody is looking at. What the player sees is one press and double the
+Grit gone.
+
+**It got easier to hit when buying stopped costing an action.** The action count
+used to run out and refuse the repeat.
+
+The guard is in `Net.play`: an **identical** command is dropped while one is in
+flight, measured by `rev` — the count of states received — so "the board has not
+moved since I sent this" is the window. Identical only, because a second and
+DIFFERENT action is a real decision and must not be swallowed.
+
+**A refused command frees the guard.** A rejection does not advance `rev`, so
+without clearing it on `error` one refused press would stay dead for the rest of
+the turn.
+
+Two things that are NOT this bug, and both look like it at the table:
+
+- **Cashing in loses the change.** Cash a 3-Grit Winchester for a 2-cost card
+  and the spare point evaporates at end of turn. Working as designed.
+- **The Old One's naming charges WHISPERS on your next purchase**, not Grit —
+  the bar that jumps is not the one you were watching.
+
+## A card with nothing to point at is not offered
+
+`legalCommands` already withheld a card with no ops — "a Saddlebag played is an
+action spent to move a card from one pile to another". The same waste happens
+with a full card and an empty board: a Six-Gun at an empty Street. Now
+`hasLiveTarget(s, op, controller)` asks whether an op could do anything, and a
+card is playable if **any** of its ops is live — a card that draws two and
+shoots one Threat is still worth playing with nothing to shoot.
+
+- **The Vessel counts as a target.** A `damage` op is live in Act II whenever
+  `vesselTargetable`, which is most of the endgame: nothing to shoot but the
+  thing you came for.
+- **`banishOmen` is live only with an Omen in the Street.** Declining does
+  nothing on its own, and the blast that follows is a separate op judged on its
+  own merits — so Dynamite is offered with any Threat present, and withheld on a
+  bare Street.
+- **It must not touch `resolveSlots`.** `target: 'random'` advances
+  `s.rngCursor` to make its pick, and this runs from `legalCommands` — on every
+  render, for every card, for every seat. A question that consumed randomness
+  would put the cursor where a replay could not follow it. The question is only
+  ever "is there anything in the Street", which needs no roll. There is a test
+  that calls `legalCommands` five times and asserts the cursor has not moved.
+
+**Measured: no balance change at all** — identical seeds, Balanced 53.5% ->
+54.0%, Greedy 44.0% -> 44.0%, Zealot 28.0% -> 28.0%, mixed 44.0% -> 44.0%. The
+bots already cashed an attack in rather than firing it at an empty Street, so
+this only ever cost a human the action. That is the whole point of it.
+
+**The client says why.** A "nothing to aim at" band, the same shape as the
+shuttered one and a lighter grey, because it is the same problem from the
+player's side — a card that plainly does something and no way to play it. It is
+drawn from the ABSENCE of a `PLAY_CARD` in `legal` plus card data, and
+deliberately does NOT reimplement `hasLiveTarget`: the client still never
+decides what is legal, only how to explain what it was told.
+
+## Recovering a card is a choice
+
+`recover` took the FIRST non-Sign in the boneyard — insertion order, so the
+oldest thing you lost. Deterministic, and indistinguishable from a dice roll
+from the far side of the table. It now asks.
+
+Two prompts, like `gift`, and built the same way: the op re-queues itself with
+`from` filled in, so the half-made decision travels in the resolution queue and
+survives being serialised mid-choice. Doc Mireles' Bag (`target: 'self'`) skips
+the first prompt and still gets the second, which is why `needsChoice` names
+`recover` explicitly rather than relying on the `target === 'choose'` rule.
+
+- **Keyed by uid**, not card id. A boneyard is mostly duplicates and "a
+  Saddlebag" is not an instruction when four of them are lying there.
+- **Signs are never offered.** They reach a boneyard only after damage has eaten
+  everything else, or a player has fallen; handing one back would make these two
+  cards a way of topping corruption up rather than of patching a deck. The op
+  re-checks on resolve, so a client that asks anyway gets nothing.
+- **The controller picks, even when the card points at somebody else** — the
+  same call `gift` makes. A blessing you did not choose is a raffle.
+- **The bot needed teaching.** The options are uids, so none of
+  `resolvePending`'s branches matched and it fell through to `legal[0]` — the
+  oldest card in the pile, which is exactly the rule being replaced. It would
+  have gone on measuring the old behaviour under the new one.
+
+Measured at 200 games a cell it is worth about 2pp on a mixed table, which is
+inside the noise: Balanced 53.5%, Greedy 44.0%, Zealot 28.0%. This was a
+legibility fix, not a power one, and only two cards carry the op.
+
+This is the same ruling `trash` already carries — "a rule you can see is a rule
+you can play around; one you cannot is just a card disappearing" — applied to a
+gain rather than a loss.
 
 ## Two rules that hold the corruption economy together
 
@@ -711,6 +1450,151 @@ leaves the Puritan on flat damage and finally reaches a balanced table (24%).
 Above ~0.4 it wipes the Zealot out. Falls now happen in 24–50% of games and
 essentially never before round 5.
 
+## Menace is dealt one point at a time
+
+From the table: one player having their deck cut in half over a single Dusk
+while everybody else watched. Three or four Threats resolve at Dusk, every one
+of them aims at whoever holds most Signs, and each used to deal its whole wound
+in one lump — so they all landed on the same seat.
+
+**The rule is unchanged. The granularity is.** `resolveMenace` now aims per
+point: take one card, look again. The moment a hit costs the leader their lead
+they are level with somebody, the tie breaks at random, and the next point goes
+elsewhere.
+
+Two things fixed deliberately, and both would be bugs the other way round:
+
+- **The size is set by the FIRST seat aimed at.** `menacePerSign` is "the wound
+  deepens with the corruption that drew it", and what drew it is who the Threat
+  was looking at when it moved. Recomputing the bonus per point would multiply
+  it by the point count.
+- **A point never lands on somebody who has already fallen.** The standing posse
+  is re-read every point, so a player going down mid-wound passes the rest of it
+  on instead of absorbing it into a deck that no longer exists. That makes Dusk
+  slightly *more* efficient, not less — it is the one place this change adds
+  damage rather than moving it.
+
+`MENACE` is still **one event per person hit**, not one per point, and
+`mergeWound` collapses the run of one-card `DAMAGED` events back into the single
+event a lump wound used to produce. The chronicle and `duskReport` both count
+these, and neither should learn about the implementation.
+
+### Measured — it helps, and it is not the whole fix
+
+200 games, Balanced table with a Marked seat, per Dusk that dealt any damage:
+
+| | worst seat's share | seats hit | worst hit (med / p90 / max) | falls |
+|---|---|---|---|---|
+| lump (was) | 86.7% | 1.44 | 4 / 10 / 26 | 288 |
+| **per point** | **83.4%** | **1.59** | 4 / **9** / 26 | **248** |
+
+Win rate moved 41.5% -> 43.0%, inside the noise at this n.
+
+**Why the effect is modest, and it is worth knowing before reaching for this
+again: damage eats non-Signs first.** A leader with a stack of Provisions loses
+those, keeps every Sign, and therefore keeps being the target — the re-aim only
+fires once their Signs actually start dropping. The concentration that remains
+is real and this does not reach it.
+
+If it needs to go further, the lever is **not** finer granularity, it is
+**per-Dusk memory**: a Threat preferring a seat that has not already been hit
+this evening. That is a new concept in `GameState` (reset at Dusk) rather than a
+tuning number, which is why it has not been built on spec.
+
+## Menace costs half its value in cards, rounded up (`damagePerHit: 0.5`)
+
+A card burned per point of Menace was too steep once escalation is in play: a
+Threat left standing four Dusks reaches Menace 5 and took five cards off one
+deck in an evening. The exchange rate is `damagePerHit`, and it is now **0.5,
+rounded UP** — `cardsFor()` in `engine/effects.ts`.
+
+**Rounded up so a Threat is never harmless.** A Menace of 1 still costs a card;
+every point after that costs half of one. The `menacePerSign` bonus is NOT run
+through the halving — it is already a fraction of a count and floored, and
+halving it too rounds most tables straight to zero.
+
+**It is gentler than "half" sounds**, and the reason is the rounding: most
+Threats print 1 or 2 Menace, where `ceil` gives back most of what halving took.
+Mean damage per Dusk falls 6.58 -> 5.91, about 10%, not 50%.
+
+Measured, 200 games a cell:
+
+| | Balanced | Greedy | Zealot | Puritan | Bal15 | Bal70 | mixed |
+|---|---|---|---|---|---|---|---|
+| 1.0 (was) | 43.5% | 37.5% | 24.0% | 0.5% | 45.0% | 32.5% | 33.0% |
+| **0.5** | **53.5%** | 42.0% | 28.5% | 0.5% | 50.5% | 37.5% | **41.5%** |
+
+**The shape survives** — Balanced > Greedy > Zealot > Puritan throughout, and
+Bal15 still beats Bal70 by 13pp. This is a difficulty dial, not a change of
+shape, which is what makes it safe to turn.
+
+**What it actually buys is falls, not the worst hit.** Per 200 games:
+
+| | mean Dusk damage | worst hit (med / p90 / max) | falls | before r5 |
+|---|---|---|---|---|
+| 1.0 | 6.58 | 4 / 10 / 31 | 246 | 46 |
+| **0.5** | 5.91 | 4 / **9** / 29 | **171** | **18** |
+
+Early falls drop 61%, which is the "**Still open: falls are early now**" problem
+tracked further down — Revenants appearing during Act I, a game shape DESIGN.md
+§6 does not describe. The worst single hit barely moves, because escalation and
+the corruption bonus still stack on top.
+
+**Cumulative drift is now the thing to watch.** Free buying was +25pp and this
+is another +8.5pp on a mixed table. Nothing has been retuned to absorb either.
+`vesselClear` is the lever.
+
+## Blind damage was tried and rejected (`blindDamage: false`)
+
+The question, asked after the per-point Menace change did less than hoped:
+should damage take a card at RANDOM rather than eating Provisions before Signs?
+It looks like it should help twice over — a corrupt deck loses Signs, so the
+Menace target moves off the leader, and Sign-heavy play punishes itself.
+
+It does the first and **the opposite of the second.**
+
+Spread, 200 games, per Dusk that dealt damage:
+
+| | worst seat's share | seats hit | worst hit p90 | falls |
+|---|---|---|---|---|
+| ordered (kept) | 81.7% | 1.64 | 9 | 276 |
+| blind | **74.7%** | **1.94** | 9 | 256 |
+
+Seven points of concentration, twice what re-aiming per point bought on its
+own. And then the cost, confirmed on fresh seeds at n=250:
+
+| | ordered | blind |
+|---|---|---|
+| **Zealot** | 24.0% | **35.6%** |
+| Bal15 | 39.2% | 44.0% |
+| Bal70 | 35.6% | 35.6% |
+| Balanced | 45.6% | 44.4% |
+
+**Blind damage rehabilitates the most reckless line in the game.** Zealot buys
+every Sign it can and is meant to lose for it; +11.6pp closes the gap to
+Balanced from 21.6pp to 8.8pp, and DESIGN.md §2's central test is exactly that
+this line must not pay.
+
+The mechanism is worth keeping, because the naive prediction is backwards.
+**Signs are not just what draws Menace, they are what SIZES it** —
+`menacePerSign` scales the wound with the Signs held. So shooting a Zealot's
+Signs off makes every subsequent wound smaller AND moves the aim elsewhere.
+Corruption stops being a ratchet and becomes something the game removes for
+you, free.
+
+It also deletes rule 2 of "Two rules that hold the corruption economy
+together": damage eats Provisions before Signs, so firing a corrupted card
+leaves you more corrupt. That rule needs the ordering to exist at all.
+
+**On the first Bal70 measurement blind looked like +13.4pp** (33.3 -> 46.7) and
+it was noise — the fresh-seed rerun put both arms at 35.6%. n=120 a cell is
++/-4.5pp; the Zealot result survived rerunning and that one did not.
+
+The flag stays, defaulted off, so it can be tried at a table. **If the
+concentration at Dusk still reads badly, the lever is per-Dusk memory** — a
+Threat preferring a seat not already hit this evening — which spreads damage
+without touching the economy at all.
+
 ## The traitor, and why there are two tunings
 
 The Marked player is implemented: the secret aim from the role card (+3 Doom if
@@ -949,6 +1833,88 @@ Two invariants live there and are easy to break by accident:
 - **Seat tokens come from `randomUUID`, never the game seed.** `seed` + command
   list reconstructs any game, so a seed-derived token would let anyone with a
   replay reclaim a seat and read its hidden role.
+
+### The passport: getting back into a chair after losing the token
+
+The report: a player dropped, tried to come back, and was told the room was
+**full**. Correctly, on the rules as they were — after the deal a chair is only
+joinable if its player left no claim on it, which is what stops a stranger
+taking a disconnected player's seat and reading their hidden role. Their seat
+token had gone with the tab, so there was nothing left to prove the chair was
+theirs.
+
+**`ClientMsg['join'].player` is a passport**: a `randomUUID` the client makes
+once and keeps in `localStorage` under `long-noon.player`. Unlike the seat
+token it is **never cleared** — not on a failed rejoin, not on leaving, not on
+an error — and it is sent with every join.
+
+- **Checked BEFORE the search for a free chair.** A full room is exactly the
+  state in which somebody needs to get back into their seat, so the claim
+  cannot be something you fall back on after the search fails.
+- **A live connection on that seat is not a reason to refuse.** The common case
+  is the player's own dead socket that the server has not noticed; refusing
+  would make recovery depend on a timeout nobody can see. Last claim wins, and
+  the stale session is unseated so it cannot go on acting as that chair.
+- **A fresh token is issued and the old one revoked.** One live token per chair,
+  or a recovered browser could act as a seat somebody else now holds.
+- **One owner per chair, with reverse cleanup.** Seating a passport deletes any
+  other pointing at that chair, and leaving releases the claim. Without that, a
+  player who walked away keeps a claim and can turn out whoever takes the chair
+  next — worse than the bug this fixes. There is a test for it.
+
+**It is a bearer credential and is treated like the token**: unguessable, never
+in `TableSeat`, never broadcast, never derived from the game seed. A test
+asserts it appears in nothing the table is sent.
+
+**Nothing prunes the seat token any more except leaving on purpose.** The client
+used to delete it whenever the server answered `Cannot rejoin` or `No such
+room`, which is very likely how the reported player lost theirs: the rejoin is
+sent automatically on every socket open, so a reconnect that raced the room into
+existence answered `No such room`, the token went, and from then on the room was
+simply "full". Both messages are transient by nature — the object may not exist
+YET, and a token that is wrong for THIS room is still right for the room it came
+from. A failed rejoin is now silent as well as harmless: the player did not ask
+for it, so its failure is not news.
+
+Implemented on both servers — `room.passports` on the Node hub,
+`TableSeatRecord.player` in worker storage (optional, so rooms written before it
+rehydrate). Optional on the wire too, so a client that has never had one still
+joins normally.
+
+### The room code lives in the address, and the join box has to move the socket
+
+Two bugs, one cause. The room is part of the ADDRESS — one Durable Object per
+room, so Cloudflare has to know which object to route to before the socket
+exists — and the server therefore takes the room from the object a message
+reached and **ignores the `roomId` field**, which is kept only so the wire
+protocol did not have to change shape for the port.
+
+- **A typed room code was ignored.** `join` went down the socket the link had
+  already opened, so the player was seated at the table the URL named. Fixed by
+  `joinPlan(current, code)` — a pure decision, tested in
+  `tests/room-code.test.ts` — plus `Net.queue`, which holds one message for the
+  NEXT socket to open. Changing the target tears down the socket and the join
+  goes out on the replacement.
+- **The box could disagree with the socket.** It read `code || net.roomId`, so
+  an empty field silently fell back to whatever the server last called the room
+  and clearing it cleared nothing. It holds one value now: what the URL said, or
+  what you typed over it. Opening a table adopts the server's name ONCE, in an
+  effect — necessary because the old Node hub names a room something other than
+  the address the socket used.
+
+Two smaller rules that fall out:
+
+- **`setRoomId(null)` when the address changes.** Otherwise the URL keeps naming
+  the room you just left until the new socket answers, and for ever if it
+  refuses. The socket effect does not re-run on partysocket's own reconnects,
+  only on a real change of address, so this cannot fire mid-session.
+- **A queued join beats the remembered rejoin**, rather than both going out and
+  the outcome depending on which reply lands first.
+
+The join field is prefilled from `?room=` **only when the URL actually named
+one**. With no room param `roomFor` invents a code for a table that does not
+exist yet, and offering that as something to join is an invitation to a
+`No such room`.
 
 `server/ws.ts` is the transport and `server/serve.ts` the entry point
 (`npm run serve`). **These are the only files allowed to read a clock or do I/O**

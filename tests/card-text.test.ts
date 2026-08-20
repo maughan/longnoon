@@ -107,6 +107,27 @@ describe('the third line', () => {
     }
   });
 
+  it('prices every Omen, and never twice the same way', () => {
+    /*
+      An Omen cannot be shot and will not leave on its own, so its Toll is the
+      only thing standing between the table and a permanently dead slot. Three
+      Omens, three different currencies — Grit, a Scar, one of your own Signs —
+      so no way of playing locks you out of answering all of them.
+    */
+    const omens = ALL_CARDS.filter((c) => c.type === 'omen');
+    expect(omens.length).toBeGreaterThan(2);
+    const prices = new Set<string>();
+    for (const c of omens) {
+      expect(c.toll?.length, `${c.name} has no Toll`).toBeGreaterThan(0);
+      const line = thirdLine(c, false);
+      expect(line, c.name).toContain('Toll: ');
+      // The price is spelled out, not left as a bare word.
+      expect(line.replace('Toll: ', '').length, c.name).toBeGreaterThan(4);
+      prices.add(JSON.stringify(c.toll));
+    }
+    expect(prices.size, 'two Omens ask for the same thing').toBe(omens.length);
+  });
+
   it('leaves an ordinary card saying only what it does', () => {
     // Damage now names what it hits — the Colt reads "4 damage to a Threat"
     // rather than a bare number, which is also where the `threat` glossary

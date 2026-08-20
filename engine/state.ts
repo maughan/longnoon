@@ -163,7 +163,21 @@ export type Op =
        */
       to?: PlayerId;
     }
-  | { op: 'recover'; target: Target }
+  /**
+   * DOC MIRELES' BAG / PARSON GRIMM. A card out of the boneyard, chosen.
+   *
+   * Two prompts, like `gift`, and for the same reason: who, then which. It used
+   * to take the FIRST non-Sign in the boneyard — insertion order, so the oldest
+   * thing you lost — which is deterministic and looks exactly like a dice roll
+   * from the far side of the table. The project already ruled on this shape for
+   * `trash`: a rule you can see is a rule you can play around, one you cannot is
+   * just a card appearing.
+   */
+  | {
+      op: 'recover'; target: Target;
+      /** Whose boneyard, once picked. Absent on the printed card. */
+      from?: PlayerId;
+    }
   /**
    * Night Watch: cancel one Threat's Menace for this round. Targets a Street
    * slot. Was modelled as a single `prevent` op shared with Salt Line, which
@@ -184,7 +198,16 @@ export type Op =
    * The price of the things you cannot pay for any other way — a Toll, or
    * burying a Sign on purpose.
    */
-  | { op: 'scar'; n: number; target: Target };
+  | { op: 'scar'; n: number; target: Target }
+  /**
+   * Hand over Grit you have earned this turn. A price, not an effect.
+   *
+   * Its own op because `canPay` has to be able to ask "could you afford this"
+   * BEFORE the button is offered — `legalCommands` only shows a Toll the player
+   * can actually meet, and a button that throws is worse than no button. A
+   * negative `grit` would have been a price the checker could not see.
+   */
+  | { op: 'payGrit'; n: number };
 
 export interface CardFilter {
   type?: CardType;
@@ -286,6 +309,18 @@ export interface CardInstance {
    * of that Sign everywhere.
    */
   offeredUntil?: number;
+  /**
+   * Round this was bought, when it was bought straight into a hand.
+   *
+   * Only set under `buyToHand`, and only to stop the loop that rule opens: five
+   * cards cost exactly what they cash in for, and neither buying nor cashing
+   * spends an action, so buy-and-sell-back is free and unbounded. Beckoned, it
+   * is unbounded and PROFITABLE — `beckonGrit` pays for buying a Sign, and
+   * three of the five are Signs.
+   *
+   * So: a card you bought is yours to use this turn, not to sell back.
+   */
+  boughtRound?: number;
 }
 
 // ---------------------------------------------------------------- players
@@ -329,7 +364,18 @@ export interface PendingChoice {
   id: string;
   player: PlayerId;
   prompt: string;
-  options: { key: string; label: string }[];
+  /**
+   * `cardId` names the card an option stands for, when it stands for one.
+   *
+   * The client draws a face instead of a button whenever it is there. The KEY
+   * cannot carry this on its own — a scried Threat, a card in a boneyard and a
+   * Provision on the shelf are all keyed by uid, because a pile can hold two of
+   * the same card and "a Saddlebag" is not an instruction when it does.
+   *
+   * No leak: `playerView` sends `pending` only to the player it belongs to, and
+   * that player is already being told the card's NAME.
+   */
+  options: { key: string; label: string; cardId?: CardId }[];
   min: number;
   max: number;
   /**
@@ -448,6 +494,120 @@ export interface Tuning {
   doomTarget: number;
   handSize: number;
   actionsPerTurn: number;
+  /**
+   * Whether a purchase spends one of them.
+   *
+   * Off, and the turn separates into the two halves a deck builder usually has:
+   * actions do things to the board, Grit buys, and the two no longer compete.
+   * Grit is then the only limit on buying — which it already was on the turns
+   * that mattered, since cashing in has never cost an action either.
+   *
+   * A switch rather than a deletion, because it moves every number in the game
+   * at once and `sweep` takes any numeric TUNING key as an axis.
+   */
+  buyCostsAction: boolean;
+  /**
+   * Whether unspent Grit survives the end of your turn.
+   *
+   * Off, it evaporates: cash a 3-Grit Winchester for a 2-cost card and the
+   * spare point is gone, so every turn's money has to be spent the turn it is
+   * earned. On, it banks — and the interesting consequence is not the extra
+   * Grit, it is that SAVING becomes a move. A player can decline the cheap
+   * card in front of them to afford the dear one next turn.
+   *
+   * Which is also why a simulation of this reads LOW: the bots buy the dearest
+   * card they can afford right now and have no concept of holding back. What
+   * they measure is the leftover change accumulating, not the strategy.
+   */
+  gritCarries: boolean;
+  /**
+   * Whether a purchase lands in your HAND rather than your discard.
+   *
+   * Off is the deck-builder default: what you buy is a promise about a future
+   * shuffle. On, it is a tool you can use this turn — which changes what buying
+   * IS, from investment to a second kind of action.
+   *
+   * Self-limiting in one respect worth remembering when reading the numbers:
+   * `startTurn` draws up to `handSize`, so a hand fattened by purchases takes a
+   * smaller draw next turn. The cards are not free, only early.
+   */
+  buyToHand: boolean;
+  /**
+   * Whether the next hand is drawn at the END of your turn instead of the start.
+   *
+   * The cards are the same cards. What changes is WHEN you see them: with the
+   * hand on the table you can plan your turn while everyone else takes theirs,
+   * instead of starting to think when it reaches you. Dominion draws this way
+   * for exactly that reason.
+   *
+   * One real interaction, not a cosmetic one — damage trashes off your DECK, so
+   * a deck that has already paid out five cards is five cards nearer to empty
+   * when Dusk lands on you.
+   */
+  drawAtEndOfTurn: boolean;
+  /**
+   * Whether the Vessel keeps its own Signs at the Turning, or trades them for
+   * more of the Old One's own cards.
+   *
+   * Keeping them is the older idea — "the more corrupt you were, the more of
+   * your purchases are in the thing now hunting the table" — and it does not
+   * survive contact with the card set. 37% of the Vessel's deck is Signs, and
+   * most Signs face the STREET: a Fevered Colt in that hand destroys a Threat
+   * for the posse, and the seat cannot cash it in either, so it is a card that
+   * either does nothing or helps the enemy.
+   *
+   * Off, each kept Sign is exchanged for another card from `vesselDeck`. Same
+   * count, same "your corruption fed it" arithmetic, no bricks.
+   */
+  vesselKeepsSigns: boolean;
+  /** Whispers the Vessel gets for burning one of the player's Signs. */
+  vesselSignWhispers: number;
+  /**
+   * Whether an empty Street is refilled at the start of a turn.
+   *
+   * From a playtest: turns where there is nothing to do. Note what the
+   * measurement says before reaching for this — the Street is empty at the
+   * start of only 0.9% of posse turns, and NO turn in 4,646 offered nothing
+   * but END_TURN. The felt problem is a hand with no attack in it (~40%), not
+   * a board with nothing on it.
+   */
+  refillEmptyStreet: boolean;
+  /**
+   * Whether the round starts with a different seat each time.
+   *
+   * Turn order is fixed for the whole game, so "last" is a property of where
+   * you sat down. Measured over 4,724 posse turns, the last seat finds nothing
+   * in the Street it can clear on **30.9%** of its turns against **0.7%** for
+   * the first — the table in front of it has already dealt with the round. It
+   * is the same seat every round for the whole game.
+   *
+   * Rotating does not create more to do. It stops one person owning all of it.
+   */
+  rotateStart: boolean;
+  /**
+   * Whether a Threat arrives when the Street holds nothing that can be CLEARED.
+   *
+   * Stronger than `refillEmptyStreet` and aimed at the number that actually
+   * hurts: an empty Street is 0.7% of posse turns, a Street with nothing
+   * clearable in it is 13.9%. An Omen occupies a slot and can never be removed
+   * by damage, so a Street holding only Omens is a full board with nothing to
+   * do on it.
+   */
+  refillNoClearable: boolean;
+  /**
+   * Whether damage takes a card at random rather than eating Provisions first.
+   *
+   * The open ruling in CLAUDE.md — "Damage vs. Signs" — asked which way this
+   * goes, because it decides whether Sign-heavy play is self-limiting or
+   * dominant. Off is the ratchet: your Provisions go, your Signs stay, and a
+   * wounded player is a MORE corrupt player. On, corruption is shot off you in
+   * proportion to how much of it you are carrying.
+   *
+   * `last-words` is protected either way. It is trashed last because being
+   * taken by the damage it exists to survive would make it useless, and that is
+   * a rule about that card rather than about Signs.
+   */
+  blindDamage: boolean;
   revenantActions: number;
   damagePerHit: number;
   provisionRowSize: number;
@@ -717,6 +877,22 @@ export interface GameState {
   players: Record<PlayerId, PlayerState>;
   /** playerId -> who may see their hand. Set by revealHand. */
   handsRevealedTo: Record<PlayerId, PlayerId[]>;
+  /**
+   * Index into `turnOrder` of whoever begins the round.
+   *
+   * `turnOrder` itself is never rotated, deliberately: a seat's index is its
+   * identity in several places — `markedIndex` at setup, and `sim/run.ts` maps
+   * a seat index to its policy on every decision — so rotating the array would
+   * silently hand a player somebody else's policy halfway through a game.
+   */
+  startSeat: number;
+  /**
+   * Who took the last turn of the previous round.
+   *
+   * Only used to stop the rotation handing somebody two turns in a row across a
+   * Dusk. Null before the first round has ended.
+   */
+  lastRoundActor: PlayerId | null;
   /** Player currently Beckoned: they gain Grit if they buy a Sign. */
   beckoned: PlayerId | null;
   /** Grit banked for a player's next turn, paid by Act I Bounties. */
@@ -769,4 +945,15 @@ export type Command =
   */
   // Revenant. BECKON went the same way as the Vessel's five: it is a card in
   // their hand now, played through PLAY_CARD like everything else.
-  | { t: 'REVENANT_WHISPER'; uid: string };
+  | { t: 'REVENANT_WHISPER'; uid: string }
+  /**
+   * The Vessel burns a Sign the player bought, for a Whisper.
+   *
+   * Its own command rather than a second meaning for `REVENANT_WHISPER` or for
+   * `SPEND_GRIT`. The three are the same gesture and three different economies:
+   * a Revenant is spending its own life, a posse member is turning a card into
+   * money, and this is the Old One burning the corruption that made it. One
+   * field doing two jobs is the mistake this project has already made twice
+   * with the Whisper track.
+   */
+  | { t: 'BURN_SIGN'; uid: string };

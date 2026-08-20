@@ -53,6 +53,17 @@ export interface TableSeatRecord {
   name: string | null;
   /** Issued on join, required to reclaim. Never leaves the object. */
   token: string | null;
+  /**
+   * The passport of whoever owns this chair — see `ClientMsg['join']`.
+   *
+   * Survives the token, which is what makes "I dropped and the room says it is
+   * full" recoverable. Never leaves the object either: it is the credential for
+   * this seat and therefore for its hidden role.
+   *
+   * Optional on the record, because rooms written before it exists rehydrate
+   * without one.
+   */
+  player?: string | null;
 }
 
 /** The seats as `GameRoom` wants them, once every chair is filled. */

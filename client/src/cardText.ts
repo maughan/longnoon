@@ -52,6 +52,8 @@ function describeEach(ops: readonly Op[]): string[] {
           return "Name a card type; nobody may play it next round";
         case "gift":
           return "A player gains a Fevered Sign";
+        case "payGrit":
+          return `Pay ${op.n} Grit`;
         case "beckon":
           return "Name a living player. The next Sign they buy pays them Grit";
         case "banishOmen":
@@ -97,7 +99,15 @@ function describeEach(ops: readonly Op[]): string[] {
       case "gainCard":
           return "Take a Provision free";
         case "recover":
-          return "Recover a card";
+          // Says which cards are eligible and that you pick. "Recover a card"
+          // told the player something would come back and nothing about what,
+          // so whatever arrived looked arbitrary.
+          return op.target === "self"
+            ? "Choose a card from your boneyard, back to your discard"
+            // You pick the player AND the card — a blessing somebody else
+            // chose is a raffle, which is the call `gift` makes too.
+            : "Choose a player, and a card from their boneyard, back to "
+              + "their discard";
         case "cancelMenace":
           return "Cancel a Threat's Menace";
         case "shield":

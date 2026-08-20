@@ -47,15 +47,36 @@ export const TUNING: Tuning = {
   // FOURTH time this number has absorbed a change to the posse's answer to the
   // Street (Bounties 34->36, the Street changes 31->22, the Whisper cycle
   // 22->14, this 14->12). It is the lever; doomTarget is not.
-  vesselClear: 12,
+  // (measured) 11 -> 15 to pay for `buyToHand`: a purchase you can use this
+  // turn is worth about 3.3pp of Balanced and 7pp of a mixed table. Swept
+  // against the rules as they now stand — Balanced 53.1% at 15, 50.4% at 16,
+  // 40.2% at 17, against 49.8% before the change. 15 keeps a mixed table where
+  // it was (35.8% against 36.2%); 16 matches Balanced instead and costs the
+  // mixed table 7pp. Before that it was 12 -> 11 to pay for `refillNoClearable`.
+  vesselClear: 15,
   // (measured) Paper had 20, giving Act II barely two rounds. 50 gives the Old
   // One room to be ground down over ~5 rounds instead. Raising this alone just
   // makes the game easier — it only lengthens Act II paired with vesselClear.
   doomTarget: 50,
   handSize: 5,
   actionsPerTurn: 3,
+  buyCostsAction: false,
+  gritCarries: false,
+  buyToHand: true,
+  drawAtEndOfTurn: false,
+  vesselKeepsSigns: true,
+  vesselSignWhispers: 1,
+  refillEmptyStreet: false,
+  rotateStart: true,
+  refillNoClearable: true,
+  blindDamage: false,
   revenantActions: 2,
-  damagePerHit: 1,
+  // (measured) Cards burned per point of Menace, ROUNDED UP — so a Threat is
+  // never harmless, and every point after the first costs half a card. At 1 a
+  // Threat that had escalated for four Dusks took five cards off one deck in an
+  // evening. Early falls 46 -> 18 per 200 games; the corruption curve keeps its
+  // shape, so this is a difficulty dial rather than a change of shape.
+  damagePerHit: 0.5,
   provisionRowSize: 4,
   // (measured) Back at the paper's 20. 16 was needed only while Omens dealt no
   // Menace; once attrition is real it punishes the zero-Sign deck on its own,
@@ -866,7 +887,21 @@ const TROUBLE: Card[] = [
       { op: "gainCard", filter: { from: "provisionRow" }, target: "self" },
     ],
   },
-  // Omens have no Clear and no Bounty. They only sit there and cost you.
+  /*
+    Omens have no Clear and no Bounty. Nothing shoots them — they sit there,
+    menace, and drip Whispers.
+
+    They each name a PRICE, though, and the three prices are deliberately
+    different currencies: money, corruption, and one of your own Signs. Dynamite
+    used to be the only answer in the game and 42.5% of games ended with an Omen
+    still standing; a table with no Dynamite had no play at all. Now every table
+    has one, and which Omen is cheap depends on how you have been playing —
+    a Puritan holds no Sign to burn and a Zealot always does.
+
+    The Toll machinery is DESIGN.md §7's third line and already existed for Act
+    II Threats. `legalCommands` only offers a Toll the player can meet, so none
+    of these is ever a button that throws.
+  */
   {
     id: "dead-cattle",
     name: "Dead Cattle, No Wounds",
@@ -875,6 +910,9 @@ const TROUBLE: Card[] = [
     grit: 0,
     menace: 0,
     ops: [],
+    // The plain price. Anyone who has earned can pay it, and it costs the turn
+    // it is paid on rather than anything permanent.
+    toll: [{ op: "payGrit", n: 3 }],
   },
   {
     id: "the-well",
@@ -884,6 +922,9 @@ const TROUBLE: Card[] = [
     grit: 0,
     menace: 0,
     ops: [],
+    // Dynamite's price, and the game's oldest bargain: the only way to clear
+    // the dread is to take on more of it.
+    toll: [{ op: "scar", n: 1, target: "self" }],
   },
   {
     id: "preacher",
@@ -893,6 +934,9 @@ const TROUBLE: Card[] = [
     grit: 0,
     menace: 0,
     ops: [],
+    // Burn a Sign. The mirror of what the Vessel does with the Signs you sold
+    // your soul for — here you burn one yourself, and get a door open for it.
+    toll: [{ op: "trash", n: 1, from: "hand", target: "self", kind: "sign" }],
   },
 ];
 

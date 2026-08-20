@@ -52,6 +52,8 @@ export interface Net {
   speed: Speed;
   isHost: boolean;
   send(msg: Inbound): void;
+  /** Hold a message for the next socket to open. See the note at the ref. */
+  queue(msg: Inbound): void;
   /** Open a room with this many chairs. Who fills them is decided at the table. */
   create(seats: number): void;
   join(roomId: string, name: string): void;
@@ -64,6 +66,36 @@ export interface Net {
   table: { seats: TableSeat[]; canBegin: boolean } | null;
   setSeat(index: number, kind: 'bot' | 'open'): void;
   begin(marked: boolean): void;
+}
+
+const PLAYER_KEY = 'long-noon.player';
+
+/**
+ * This browser's passport, made once and kept for good.
+ *
+ * The seat token is per session and per room, and it goes when the tab does.
+ * The report this exists for: a player dropped, tried to come back, and was
+ * told the room was FULL — every chair was accounted for, one of them was
+ * theirs, and they had nothing left to prove it with. The passport is that
+ * proof, and unlike the token it is never cleared: not on a failed rejoin, not
+ * on leaving, not on an error.
+ *
+ * `randomUUID`, so it is unguessable. It is a bearer credential — whoever holds
+ * it can take that chair and read its hidden role — which is also why the
+ * server keeps it out of every payload.
+ */
+export function passport(): string {
+  try {
+    const held = localStorage.getItem(PLAYER_KEY);
+    if (held) return held;
+    const made = crypto.randomUUID();
+    localStorage.setItem(PLAYER_KEY, made);
+    return made;
+  } catch {
+    // Storage refused — private browsing, or a locked-down profile. A fresh id
+    // each time is no worse than the behaviour before there was one.
+    return crypto.randomUUID();
+  }
 }
 
 /** Remembered across a refresh so a reload does not cost you your seat. */
@@ -104,6 +136,30 @@ export function roomFor(search: string, make: () => string = newRoomCode): {
   return inUrl ? { room: inUrl, fromUrl: true } : { room: make(), fromUrl: false };
 }
 
+/**
+ * Sitting down: send it now, or move the socket first?
+ *
+ * Pure, and separated from the component for the same reason `roomFor` is —
+ * this is the decision the bug was in, and a decision that only exists inside a
+ * click handler is a decision nothing can check.
+ *
+ * The rule: a `join` naming a room the socket is not open to cannot be sent.
+ * The room is part of the ADDRESS — one Durable Object per room — so the server
+ * takes it from the object the message reached and ignores the field. Sending
+ * anyway is not a no-op, it is a join to the WRONG room, which is exactly what
+ * was reported: a typed code ignored and the player seated at the table the
+ * link named.
+ *
+ * Returns `null` for nothing worth doing.
+ */
+export function joinPlan(
+  current: string, code: string,
+): { room: string; move: boolean } | null {
+  const room = code.trim();
+  if (!room) return null;
+  return { room, move: room !== current };
+}
+
 /** A short, readable room code. Not a secret: seats are held by token. */
 export function newRoomCode(): string {
   const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
@@ -126,6 +182,14 @@ export function useNet(target: NetTarget): Net {
     { seq: 0, events: [] },
   );
   const [rev, setRev] = useState(0);
+  /*
+    The same counter as a ref, for the double-fire guard below.
+
+    The socket handler is installed once, so anything it reads must be a ref —
+    and the guard has to compare against the CURRENT count, not the one that
+    was current when a callback was created.
+  */
+  const revRef = useRef(0);
   const [tableState, setTable] = useState<Net['table']>(null);
   const [error, setError] = useState<string | null>(null);
   const [dev, setDev] = useState(false);
@@ -148,6 +212,24 @@ export function useNet(target: NetTarget): Net {
     sock.current?.readyState === WebSocket.OPEN
       && sock.current.send(JSON.stringify(msg));
   }, []);
+
+  /**
+   * One message held for the NEXT socket to open.
+   *
+   * Changing rooms is changing the socket — the room is part of the address,
+   * because one Durable Object per room means the routing happens before the
+   * connection exists. So "join room X" cannot be sent down the socket that is
+   * open to room Y; it has to wait for the one that replaces it.
+   *
+   * This is the bug it fixes: typing a different room code and pressing Sit
+   * Down sent `join` with that id down the EXISTING socket, and the server
+   * takes the room from the object the message reached, not from the field.
+   * You were put back in the room the URL named, with nothing to say otherwise.
+   */
+  const queued = useRef<Inbound | null>(null);
+  /** The last command sent, and the state count it was sent against. */
+  const sent = useRef<{ key: string; rev: number } | null>(null);
+  const queue = useCallback((msg: Inbound) => { queued.current = msg; }, []);
 
   /**
    * Back to the menu, whatever brought us here.
@@ -179,6 +261,12 @@ export function useNet(target: NetTarget): Net {
      * as a disconnect they have to recover from by reloading. This reconnects
      * with backoff and replays the rejoin below, so a hibernation is invisible.
      */
+    // Whatever the last room called itself, it is not this one. Cleared here
+    // rather than left to the reply, or the address bar keeps naming the room
+    // you just left for as long as the new socket takes to answer — and for
+    // ever if it refuses. This effect does not re-run on partysocket's own
+    // reconnects, only on a real change of address.
+    setRoomId(null);
     const ws = new PartySocket({
       host: target.host,
       party: 'room',            // the ROOM binding, lowercased
@@ -188,6 +276,18 @@ export function useNet(target: NetTarget): Net {
 
     ws.onopen = () => {
       setConnected(true);
+      /*
+        An explicit join wins over the remembered one.
+
+        Both would otherwise go out on the same socket: a token from the room
+        you just left is refused here anyway — tokens are per room — but sending
+        both makes the outcome depend on which error arrives first.
+      */
+      if (queued.current) {
+        ws.send(JSON.stringify(queued.current));
+        queued.current = null;
+        return;
+      }
       // A refresh should put you back in your chair, not in the lobby.
       const prev = remembered();
       if (prev) ws.send(JSON.stringify({ t: 'rejoin', ...prev } satisfies Inbound));
@@ -236,6 +336,7 @@ export function useNet(target: NetTarget): Net {
           setView(msg.view);
           setBots(msg.bots ?? []);
           setRev((n) => n + 1);
+          revRef.current += 1;
           setLegal(msg.legal);
           const seatNow = seatRef.current;
           if (msg.events.length) {
@@ -277,10 +378,33 @@ export function useNet(target: NetTarget): Net {
           setLog((l) => [`— ${msg.event.t.toLowerCase().replace(/_/g, ' ')}`, ...l]);
           break;
         case 'error':
-          // A stale token from a closed room should not strand you.
-          if (msg.message === 'Cannot rejoin' || msg.message === 'No such room') {
-            localStorage.removeItem(TOKEN_KEY);
-          } else setError(msg.message);
+          /*
+            A failed rejoin is quiet, and it costs you nothing.
+
+            The rejoin above is sent by the client on every open, not by the
+            player — so its failure is not news, and it must not destroy
+            anything. This used to delete the stored token, which is how a
+            player ended up with no claim on a seat that was still theirs: a
+            reconnect that raced the room into existence answered `No such
+            room`, the token went, and from then on the room was simply "full".
+            Both of these are transient by nature — the object may not exist
+            YET, and a token that is wrong for this room is still right for the
+            room it came from.
+
+            Nothing prunes the token now except leaving on purpose (`toMenu`).
+            A stale one is harmless: the rejoin fails, this says nothing, and
+            the passport is what gets the chair back.
+          */
+          /*
+            A refused command frees the guard.
+
+            The double-fire guard blocks an identical command until the board
+            moves, and a rejection does not move it — so without this, one
+            refused press would make that press dead for the rest of the turn.
+          */
+          sent.current = null;
+          if (msg.message === 'Cannot rejoin' || msg.message === 'No such room') break;
+          setError(msg.message);
           break;
         default:
           break;
@@ -292,7 +416,7 @@ export function useNet(target: NetTarget): Net {
 
   return {
     connected, roomId, seat, view, legal, log, beats, feed, rev, error, dev, bots,
-    speed, isHost, send,
+    speed, isHost, send, queue,
     table: tableState,
     setSeat: (index, kind) => send({ t: 'seat', index, kind }),
     begin: (marked) => send({ t: 'begin', marked }),
@@ -300,8 +424,32 @@ export function useNet(target: NetTarget): Net {
     // `roomId` is still accepted by the server and ignored — the object it
     // reached IS the room. Kept in the message so the wire protocol did not
     // have to change shape for the port.
-    join: (id, name) => send({ t: 'join', roomId: id, name }),
-    play: (command) => send({ t: 'command', command }),
+    join: (id, name) => send({ t: 'join', roomId: id, name, player: passport() }),
+    /*
+      One command, one press.
+
+      From a playtest: "a card was bought from the market but it seemed to cost
+      more Grit than stated". The engine charges exactly the printed cost — a
+      test asserts it for every purchasable card — but nothing stopped the SAME
+      command being sent twice before the answer to the first arrived, and two
+      BUYs are two legal purchases at full price each. A card in the market
+      sheet is bought by clicking it, and a double-click on a card is a natural
+      gesture, so the second charge looked like the first one costing double.
+
+      It got easier to hit when buying stopped costing an action: the action
+      count used to run out and block the repeat.
+
+      Identical commands only, and only while one is in flight — a second,
+      DIFFERENT action is a real decision and must not be swallowed. `rev`
+      counts states received, so "the board has not moved since I sent this"
+      is the window.
+    */
+    play: (command) => {
+      const key = JSON.stringify(command);
+      if (sent.current?.key === key && sent.current.rev === revRef.current) return;
+      sent.current = { key, rev: revRef.current };
+      send({ t: 'command', command });
+    },
     leave: () => {
       send({ t: 'leave' });
       // Reset locally rather than waiting to be told. The server's answer to a

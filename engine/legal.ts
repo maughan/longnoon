@@ -1,6 +1,6 @@
 import type { GameState, Command, PlayerId } from './state';
 import { card, SIGN_IDS } from '../content/cards';
-import { canPay, shuttered, opsFor } from './effects';
+import { canPay, shuttered, opsFor, hasLiveTarget } from './effects';
 
 // `shuttered` lives in effects.ts now, because the `shutter` OP needs it and
 // effects.ts cannot import from legal.ts. Re-exported so every existing import
@@ -49,7 +49,17 @@ export function legalCommands(s: GameState, pid: PlayerId): Command[] {
       leave `apply` still accepting it, which is the drift tech-spec.md §4
       exists to prevent.
     */
-    const does = opsFor(card(ci.cardId), ci.fevered).length > 0;
+    /*
+      Nor a card with nothing to point at.
+
+      The same rule one paragraph up, applied to the board instead of to the
+      card: a Six-Gun at an empty Street spends an action to move a card from
+      your hand to your discard. `hasLiveTarget` asks only about the Street, and
+      a card is playable if ANY of its ops is live — a card that draws two and
+      shoots one Threat is still worth playing with nothing to shoot.
+    */
+    const ops = opsFor(card(ci.cardId), ci.fevered);
+    const does = ops.length > 0 && ops.some((op) => hasLiveTarget(s, op, pid));
     if (hasAction && does && !shuttered(s, card(ci.cardId).type)) {
       out.push({ t: 'PLAY_CARD', uid: ci.uid });
     }
@@ -63,8 +73,31 @@ export function legalCommands(s: GameState, pid: PlayerId): Command[] {
       button. It also takes the market and the counter off that seat's screen
       entirely: what is left is play a card and end your turn.
     */
-    if (p.status !== 'vessel' && card(ci.cardId).grit > 0) {
+    /*
+      Nor a card you bought this turn.
+
+      Only reachable under `buyToHand`, and it is what keeps that rule from
+      being a loop: five cards cash in for exactly what they cost, and neither
+      buying nor cashing spends an action, so buy-and-sell-back would be free
+      and unbounded — and profitable while Beckoned, since three of the five
+      are Signs and `beckonGrit` pays for buying one.
+    */
+    const justBought = ci.boughtRound === s.round;
+    if (p.status !== 'vessel' && card(ci.cardId).grit > 0 && !justBought) {
       out.push({ t: 'SPEND_GRIT', uids: [ci.uid] });
+    }
+  }
+
+  /*
+    The Vessel burns a Sign for a Whisper — see the command.
+
+    Offered for Signs only, and only from that seat. It is the outlet that makes
+    the player's own Signs worth having in this deck: most of them face the
+    Street, and the Vessel can neither use those nor cash them in.
+  */
+  if (hasAction && p.status === 'vessel') {
+    for (const ci of p.hand) {
+      if (card(ci.cardId).type === 'sign') out.push({ t: 'BURN_SIGN', uid: ci.uid });
     }
   }
 
@@ -77,7 +110,14 @@ export function legalCommands(s: GameState, pid: PlayerId): Command[] {
     });
   }
 
-  if (hasAction && p.status === 'posse') {
+  /*
+    Buying, which by default costs no action — so it is offered on the strength
+    of Grit alone, exactly like cashing a card in.
+
+    Still only on your own turn: the guard above returns early for anybody who
+    is not the active player, and that is the part doing the work here.
+  */
+  if ((hasAction || !s.tuning.buyCostsAction) && p.status === 'posse') {
     for (const ci of s.supply.provisionRow) {
       const def = card(ci.cardId);
       if ((def.cost ?? 99) <= p.gritThisTurn) out.push({ t: 'BUY', cardId: def.id });

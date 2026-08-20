@@ -532,6 +532,20 @@ label {
 .card.shut {
   filter: grayscale(0.85) brightness(0.72);
 }
+
+/* A card with nothing in the Street to point at.
+ *
+ * The same shape as a shuttered card, because it is the same problem from the
+ * player's side — a card that plainly does something and no way to play it —
+ * but a lighter hand: this one clears itself the moment a Threat arrives,
+ * where a shutter is somebody's move against you and lasts a round. */
+.card.untargeted {
+  filter: grayscale(0.5) brightness(0.85);
+}
+.card.untargeted .shutband.quiet {
+  border-color: var(--ink-mute);
+  color: var(--ink-mute);
+}
 .card.shut .shutband {
   position: absolute;
   left: 0;

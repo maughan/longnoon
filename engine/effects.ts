@@ -192,7 +192,13 @@ export function damagePlayer(
   for (let i = 0; i < n; i++) {
     refill(s, pid, ev);
     if (!p.deck.length) { fall(s, pid, ev); break; }
-    let idx = p.deck.findIndex((ci) => card(ci.cardId).type !== 'sign');
+    // Blind: anything in the deck, uniformly — so a deck that is mostly Signs
+    // mostly loses Signs. Last Words is still spared while there is anything
+    // else, which is a rule about that card and not about Signs.
+    let idx = s.tuning.blindDamage
+      ? pickIndex(s, p.deck.map((ci, i) => (ci.cardId === 'last-words' ? -1 : i))
+        .filter((i) => i >= 0))
+      : p.deck.findIndex((ci) => card(ci.cardId).type !== 'sign');
     // Non-Signs first, then Signs — and Last Words last of all, because being
     // trashed by the damage it exists to survive would make it useless.
     if (idx === -1) idx = p.deck.findIndex((ci) => ci.cardId !== 'last-words');
@@ -235,6 +241,36 @@ export function isSlotOp(op: Op): boolean {
   return SLOT_OPS.has(op.op);
 }
 
+/**
+ * Could this op do anything at all right now?
+ *
+ * Only asks about the STREET. A card whose every op needs a Threat, played at
+ * an empty Street, is an action spent to move a card from your hand to your
+ * discard — the same waste `legalCommands` already refuses for a card with no
+ * ops at all, and the same reason: finding out by pressing the button is the
+ * interface explaining the rules after the fact.
+ *
+ * **Does not touch `resolveSlots`.** `target: 'random'` advances `s.rngCursor`
+ * to make its pick, and this is called from `legalCommands` — which runs on
+ * every render, for every card, for every seat. Consuming randomness from a
+ * question would put the RNG cursor somewhere replay could not follow it, and
+ * invariant 1 is the one that cannot be bent. The question is only ever "is
+ * there anything in the Street", which needs no roll.
+ */
+export function hasLiveTarget(s: GameState, op: Op, controller: PlayerId): boolean {
+  // The Omen branch of Dynamite. Declining does nothing on its own — the blast
+  // that follows is a separate op and is judged on its own merits.
+  if (op.op === 'banishOmen') return omenSlots(s).length > 0;
+  if (!isSlotOp(op)) return true;
+  // `isSlotOp` does not narrow the union, so read the field defensively rather
+  // than teaching the type system a second time in a different place.
+  if ('target' in op && op.target === 'omen') return omenSlots(s).length > 0;
+  // A card aimed at the Vessel has a target with the Street empty, which is
+  // most of Act II's endgame: nothing to shoot but the thing you came for.
+  if (op.op === 'damage' && vesselTargetable(s) && s.vessel !== controller) return true;
+  return occupiedSlots(s).length > 0;
+}
+
 // ---------------------------------------------------------------------------
 // The Vessel as a target.
 //
@@ -260,6 +296,29 @@ export function pickExtreme(
   return tied.length === 1
     ? tied[0]
     : tied[randInt(s.seed, s.rngCursor++, tied.length)];
+}
+
+/**
+ * One of these indices, at random. `-1` for an empty list, so it falls through
+ * to the same "nothing but Last Words left" branch the ordered rule uses.
+ *
+ * Through `s.rngCursor` like every other roll in the engine — a closure-held
+ * RNG is the one thing invariant 1 cannot survive.
+ */
+function pickIndex(s: GameState, idx: number[]): number {
+  if (!idx.length) return -1;
+  return idx[randInt(s.seed, s.rngCursor++, idx.length)]!;
+}
+
+/**
+ * What may come back out of a boneyard.
+ *
+ * Not Signs. They reach the boneyard only when damage has eaten everything else
+ * or a player has fallen, and handing corruption back would make the two
+ * recovery cards a way of topping your Signs up rather than of patching a deck.
+ */
+function recoverable(ci: CardInstance): boolean {
+  return card(ci.cardId).type !== 'sign';
 }
 
 /** Choice key standing for the Vessel, distinct from numeric slot keys. */
@@ -417,6 +476,10 @@ export function resolvePlayers(
 export function canPay(s: GameState, pid: PlayerId, ops: readonly Op[]): boolean {
   const p = s.players[pid];
   for (const op of ops) {
+    if (op.op === 'payGrit') {
+      if (p.gritThisTurn < op.n) return false;
+      continue;
+    }
     if (op.op !== 'trash' || !op.kind) continue;
     const pile = op.from === 'hand' ? p.hand : p.deck;
     if (pile.filter((ci) => card(ci.cardId).type === op.kind).length < op.n) {
@@ -431,7 +494,7 @@ export function choiceOptions(
 ): { key: string; label: string }[] {
   if (op.op === 'scry') {
     return threatDeck(s).slice(0, op.n).map((ci) => ({
-      key: ci.uid, label: card(ci.cardId).name,
+      key: ci.uid, label: card(ci.cardId).name, cardId: ci.cardId,
     }));
   }
   /*
@@ -451,7 +514,21 @@ export function choiceOptions(
   if (op.op === 'gift' && op.to !== undefined) {
     // Second prompt: which Sign. The Vessel chooses, because a gift it did not
     // pick is not a temptation — it is a raffle.
-    return SIGN_IDS.map((id) => ({ key: id, label: card(id).name }));
+    return SIGN_IDS.map((id) => ({ key: id, label: card(id).name, cardId: id }));
+  }
+  if (op.op === 'gainCard' && op.filter.from === 'provisionRow') {
+    // Which Provision off the shelf. By uid, because the row can hold two of
+    // the same card and "a Canteen" is not an instruction when it does.
+    return s.supply.provisionRow.map((ci) => ({
+      key: ci.uid, label: card(ci.cardId).name, cardId: ci.cardId,
+    }));
+  }
+  if (op.op === 'recover' && op.from !== undefined) {
+    // The controller picks, even when the card is pointed at somebody else —
+    // the same call `gift` makes. A blessing you did not choose is a raffle.
+    return (s.players[op.from]?.boneyard ?? [])
+      .filter(recoverable)
+      .map((ci) => ({ key: ci.uid, label: card(ci.cardId).name, cardId: ci.cardId }));
   }
   if (op.op === 'callSign' || op.op === 'gift' || op.op === 'beckon') {
     return s.turnOrder
@@ -693,6 +770,23 @@ export function oldestSlot(s: GameState): number {
   return best;
 }
 
+/**
+ * Menace, in cards off a deck. `damagePerHit` is the exchange rate.
+ *
+ * Rounded UP, so a Threat is never harmless: at 0.5 a Menace of 1 still costs a
+ * card, and every point after that costs half of one. Escalation is what makes
+ * this matter — a Threat left standing four Dusks reaches Menace 5, and the
+ * difference between five cards and three is the difference between a bad
+ * evening and a deck cut in half.
+ *
+ * The corruption bonus is NOT run through here: `menacePerSign` is already a
+ * fraction of a count, floored, and halving it too would round most tables
+ * straight to zero.
+ */
+function cardsFor(s: GameState, menace: number): number {
+  return Math.ceil(menace * s.tuning.damagePerHit);
+}
+
 export function resolveMenace(s: GameState, slot: number, ev: GameEvent[]): void {
   const sl = s.street[slot];
   if (!sl) return;
@@ -721,19 +815,109 @@ export function resolveMenace(s: GameState, slot: number, ev: GameEvent[]): void
   // first-match rule sends every point of damage to the same player all game
   // whenever Signs are level, and cascades it down the table.
   const aim = def.menaceTarget ?? 'mostSigns';
-  const victims =
-    aim === 'all' ? targets
-    : aim === 'fewestCards'
-      ? [pickExtreme(s, targets, (id) => deckSize(s, id), false)!]
-      : [pickExtreme(s, targets, (id) => signsHeld(s, id), true)!];
 
-  for (const victim of victims) {
-    // The wound deepens with the corruption that drew it.
-    const extra = Math.floor(signsHeld(s, victim) * s.tuning.menacePerSign);
-    const total = menace * s.tuning.damagePerHit + extra;
-    ev.push({ t: 'MENACE', slot, cardId: def.id, player: victim, amount: total });
-    damagePlayer(s, victim, total, ev);
+  if (aim === 'all') {
+    for (const victim of targets) {
+      // The wound deepens with the corruption that drew it.
+      const extra = Math.floor(signsHeld(s, victim) * s.tuning.menacePerSign);
+      const total = cardsFor(s, menace) + extra;
+      ev.push({ t: 'MENACE', slot, cardId: def.id, player: victim, amount: total });
+      damagePlayer(s, victim, total, ev);
+    }
+    return;
   }
+
+  /*
+    ONE POINT AT A TIME, re-aimed after every one.
+
+    The wound used to be a single lump: pick the most corrupt seat, work out
+    how big the hit is, and take that many cards off them in one go. At Dusk,
+    with three or four Threats resolving and every one of them aiming by the
+    same rule, that meant one player having their deck halved in an evening
+    while everybody else watched.
+
+    Aimed per point instead. The moment a hit costs the leader a Sign they are
+    level with somebody, the tie breaks at random and the next point goes
+    elsewhere — the rule is the same rule, applied at the granularity the
+    fiction implies. Nothing about how MUCH damage lands changes; only who
+    takes it.
+
+    Two consequences worth stating rather than discovering:
+
+      * The size is fixed by the FIRST seat aimed at. `menacePerSign` is "the
+        wound deepens with the corruption that drew it", and what drew it is
+        who the Threat was looking at when it moved. Recomputing per point
+        would multiply the bonus by the point count.
+      * A point never lands on somebody who has already fallen. Standing posse
+        only, re-read every point — so a player going down mid-wound passes the
+        rest of it to the next most corrupt seat rather than absorbing it into
+        a deck that no longer exists.
+  */
+  const standing = () =>
+    livingPlayers(s).filter((id) => s.players[id].status === 'posse');
+  const nextVictim = (pool: PlayerId[]) => (aim === 'fewestCards'
+    ? pickExtreme(s, pool, (id) => deckSize(s, id), false)
+    : pickExtreme(s, pool, (id) => signsHeld(s, id), true));
+
+  const first = nextVictim(targets);
+  if (!first) return;
+  const total = cardsFor(s, menace)
+    + Math.floor(signsHeld(s, first) * s.tuning.menacePerSign);
+
+  // Kept per victim and emitted afterwards, so the chronicle still reads as one
+  // sentence per person hit rather than as `total` separate one-card wounds.
+  const order: PlayerId[] = [];
+  const tally = new Map<PlayerId, number>();
+  const wounds = new Map<PlayerId, GameEvent[]>();
+
+  for (let i = 0; i < total; i++) {
+    const pool = standing();
+    if (!pool.length) break;
+    const victim = nextVictim(pool);
+    if (!victim) break;
+    if (!wounds.has(victim)) { order.push(victim); wounds.set(victim, []); }
+    tally.set(victim, (tally.get(victim) ?? 0) + 1);
+    damagePlayer(s, victim, 1, wounds.get(victim)!);
+  }
+
+  for (const victim of order) {
+    ev.push({
+      t: 'MENACE', slot, cardId: def.id, player: victim, amount: tally.get(victim)!,
+    });
+    ev.push(...mergeWound(wounds.get(victim)!));
+  }
+}
+
+/**
+ * One point of damage at a time produces one `DAMAGED` event per point. Nobody
+ * wants to read "Ada loses a Saddlebag" four times, and the Dusk report counts
+ * these — so the run is collapsed back into the single event a lump wound used
+ * to produce, in the position the first one held.
+ *
+ * `FELL` and anything else keep their place. A player can only fall on the last
+ * point they take, because falling drops them out of the pool.
+ */
+function mergeWound(events: GameEvent[]): GameEvent[] {
+  const out: GameEvent[] = [];
+  let damaged: (GameEvent & { t: 'DAMAGED' }) | null = null;
+  let prevented: (GameEvent & { t: 'PREVENTED' }) | null = null;
+  for (const e of events) {
+    if (e.t === 'DAMAGED') {
+      if (!damaged) { damaged = { ...e }; out.push(damaged); }
+      else {
+        damaged.amount += e.amount;
+        damaged.trashed = [...damaged.trashed, ...e.trashed];
+      }
+      continue;
+    }
+    if (e.t === 'PREVENTED') {
+      if (!prevented) { prevented = { ...e }; out.push(prevented); }
+      else prevented.amount += e.amount;
+      continue;
+    }
+    out.push(e);
+  }
+  return out;
 }
 
 /**
@@ -971,6 +1155,11 @@ export function execOp(
       return;
     }
 
+    case 'payGrit': {
+      const p = s.players[controller];
+      if (p) p.gritThisTurn = Math.max(0, p.gritThisTurn - op.n);
+      return;
+    }
     case 'scar': {
       const targets = chosen ? [chosen] : resolvePlayers(s, op.target, controller);
       for (const pid of targets) {
@@ -999,22 +1188,66 @@ export function execOp(
       return;
     }
     case 'recover': {
-      const targets = chosen ? [chosen] : resolvePlayers(s, op.target, controller);
-      for (const pid of targets) {
-        const p = s.players[pid];
-        const idx = p.boneyard.findIndex((ci) => card(ci.cardId).type !== 'sign');
-        if (idx >= 0) p.discard.push(...p.boneyard.splice(idx, 1));
+      /*
+        First pass: settle WHOSE boneyard, then ask again for the card.
+
+        Re-queued rather than resolved in one step, exactly as `gift` does it —
+        the half-made decision travels in the resolution queue, so it survives
+        being serialised mid-choice like everything else.
+      */
+      if (op.from === undefined) {
+        const targets = chosen ? [chosen] : resolvePlayers(s, op.target, controller);
+        // Unshifted so one card's second question is answered before anything
+        // else on the queue, and in reverse so several targets keep their order.
+        for (const pid of [...targets].reverse()) {
+          if (s.resolution) s.resolution.queue.unshift({ ...op, from: pid });
+        }
+        return;
+      }
+      const p = s.players[op.from];
+      if (!p) return;
+      // By uid: a boneyard is mostly duplicates, and "a Saddlebag" is not an
+      // instruction when four of them are lying there.
+      const idx = chosen
+        ? p.boneyard.findIndex((ci) => ci.uid === chosen)
+        : p.boneyard.findIndex((ci) => recoverable(ci));
+      if (idx >= 0 && recoverable(p.boneyard[idx]!)) {
+        p.discard.push(...p.boneyard.splice(idx, 1));
       }
       return;
     }
     case 'gainCard': {
-      const targets = chosen ? [chosen] : resolvePlayers(s, op.target, controller);
+      const fromRow = op.filter.from === 'provisionRow';
+      /*
+        `chosen` means two different things here.
+
+        For a Provision off the shelf it is the UID of the card picked; for
+        anything else it is the player the op was pointed at. They cannot both
+        be in flight, because no card asks for both — one that did would need
+        the two-prompt shape `gift` uses, with the first answer stored on the op.
+      */
+      const targets = (!fromRow && chosen)
+        ? [chosen]
+        : resolvePlayers(s, op.target, controller);
       for (const pid of targets) {
-        if (op.filter.from === 'provisionRow') {
-          const inst = s.supply.provisionRow.shift();
+        if (fromRow) {
+          // The one you asked for, or the leftmost if nothing was picked.
+          const at = chosen ? s.supply.provisionRow.findIndex((ci) => ci.uid === chosen) : 0;
+          const inst = s.supply.provisionRow.splice(at >= 0 ? at : 0, 1)[0];
           if (inst) {
             s.players[pid].discard.push(inst);
             ev.push({ t: 'BOUGHT', player: pid, cardId: inst.cardId });
+            /*
+              And the shelf refills, exactly as it does after a purchase.
+
+              It did not, which meant a Bounty quietly shrank the row for the
+              rest of the game — four Act I Threats pay one, so a table that
+              cleared well ended up shopping from a shorter shelf than a table
+              that did not. The Provision DECK is the finite thing
+              (`provisionCount`); the row is a window onto it.
+            */
+            const next = s.supply.provisions.shift();
+            if (next) s.supply.provisionRow.push(next);
           }
         } else if (op.filter.from === 'signs') {
           const pick = op.filter.maxCost;
@@ -1101,6 +1334,19 @@ export function runQueue(s: GameState, ev: GameEvent[]): void {
     */
     const needsChoice = op.op === 'scry' || op.op === 'banishOmen'
       || op.op === 'shutter'
+      // Second half of a recover: which card, whoever the first half settled
+      // on. Not covered by the `choose` rule below, because Doc Mireles' Bag
+      // is `target: 'self'` and still has a decision to make.
+      || (op.op === 'recover' && op.from !== undefined)
+      /*
+        Taking a Provision off the shelf is a choice, not the leftmost card.
+
+        Asked whatever the `target`, because every card that does this points at
+        `self` — the Bounty is yours — so there is no player prompt to come
+        first. A future card wanting to give somebody else a Provision they pick
+        would need `gift`'s two-stage shape.
+      */
+      || (op.op === 'gainCard' && op.filter.from === 'provisionRow')
       || ('target' in op && op.target === 'choose');
     if (needsChoice) {
       const options = choiceOptions(s, op, ctrl);

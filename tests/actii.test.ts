@@ -7,12 +7,27 @@
 //   Revenant: "play a Fevered card (you choose all targets)."
 
 import { describe, it, expect } from 'vitest';
-import { setup, start, apply, legalCommands } from '../engine';
+import { setup as rawSetup, start, apply, legalCommands, isLegal } from '../engine';
 import {
   newInstance, opsFor, VESSEL_KEY, deckSize, damagePlayer, drawCards,
+  effectiveMenace, signsHeld, pushOps, runQueue, resolveChoice,
 } from '../engine/effects';
 import { card, SIGN_IDS, TROUBLE_IDS } from '../content/cards';
-import type { GameState, PlayerId, Op, Card } from '../engine/state';
+import type { GameState, PlayerId, Op, Card, GameEvent } from '../engine/state';
+
+/*
+  Every `setup` in this file runs with the two board-rewriting rules OFF.
+
+  `refillNoClearable` deals a Threat when the Street holds nothing clearable and
+  `rotateStart` moves who begins the round. Both are on by default and both are
+  correct — and both rewrite a hand-built board or turn order underneath a test
+  that was about something else. A test whose SUBJECT is either rule passes it
+  in `tuning`, which wins: the spread below puts the caller's values last.
+*/
+const STEADY = { refillNoClearable: false, rotateStart: false } as const;
+const setup: typeof rawSetup = (opts) =>
+  rawSetup({ ...opts, tuning: { ...STEADY, ...opts.tuning } });
+
 
 const base = (tuning: Partial<GameState['tuning']> = {}) =>
   setup({ seed: 'noon', players: ['Ada', 'Bo', 'Cy'], markedIndex: 1, tuning });
@@ -635,6 +650,745 @@ describe('the Revenant burns out', () => {
     const r = apply(cur, target, { t: 'BUY', cardId: 'certainty' });
     expect(r.state.players[target].gritThisTurn).toBe(10 - 2 + r.state.tuning.beckonGrit);
     expect(r.state.beckoned).toBeNull();
+  });
+});
+
+/*
+  Menace is aimed one point at a time.
+
+  The complaint that produced this: one player having their deck halved in a
+  single Dusk while everybody else watched. The rule has not changed — Menace
+  still goes to whoever holds most Signs — but it is now applied per point, so
+  the moment a hit costs the leader their lead the next point looks again.
+*/
+describe('Menace is dealt a point at a time', () => {
+  /**
+   * A table where one seat leads on Signs by exactly one, and both have plenty
+   * of cards to lose. One point of damage is enough to level them.
+   */
+  function nearTied(seed: string) {
+    const s = start(setup({ seed, players: ['Ada', 'Bo', 'Cy'], markedIndex: null })).state;
+    const [a, b] = s.turnOrder;
+    for (const id of [a, b]) {
+      s.players[id].hand = [];
+      s.players[id].discard = [];
+      s.players[id].deck = Array.from({ length: 14 }, () => newInstance(s, 'six-gun'));
+    }
+    // Signs live in the deck, so they are both the count and the health.
+    for (let i = 0; i < 4; i++) s.players[a].deck.push(newInstance(s, 'colt'));
+    for (let i = 0; i < 3; i++) s.players[b].deck.push(newInstance(s, 'colt'));
+    // Damage eats non-Signs first, so nothing here would ever cost a Sign and
+    // the aim could never move. Strip them down to the Signs alone.
+    s.players[a].deck = s.players[a].deck.filter((ci) => card(ci.cardId).type === 'sign');
+    s.players[b].deck = s.players[b].deck.filter((ci) => card(ci.cardId).type === 'sign');
+    /*
+      Escalated, so the wound is several points rather than one.
+
+      `damagePerHit` is 0.5 and rounds up, so a freshly-arrived Threat costs a
+      single card — and a one-point wound cannot split by definition. Four
+      Dusks of escalation is the case this rule exists for anyway: the evening
+      that used to take half a deck off one player.
+    */
+    const sl = threat(s, 'barons-men');
+    sl.escalation = 5;
+    s.street = [sl, null, null];
+    s.activePlayer = s.turnOrder[s.turnOrder.length - 1]!;
+    s.actionsLeft = 0;
+    return { s, a, b };
+  }
+
+  it('moves the wound once the lead is gone', () => {
+    /*
+      Asserted across seeds, not on one.
+
+      When the leader is levelled the tie breaks at RANDOM — deliberately, so
+      that a first-match rule cannot send every point to the same seat all game
+      — which means no single game can be expected to split. What must be true
+      is that the wound CAN move, and under the old lump rule it never could:
+      every point went where the first one did, in every seed.
+    */
+    let split = 0;
+    for (let i = 0; i < 12; i++) {
+      const { s, a } = nearTied(`menace-${i}`);
+      const r = apply(s, s.activePlayer, { t: 'END_TURN' });
+      const hit = new Set(
+        r.events.filter((e) => e.t === 'MENACE').map((e) => (e as { player: string }).player),
+      );
+      expect(hit.has(a), 'the leader was not hit first').toBe(true);
+      if (hit.size > 1) split++;
+    }
+    expect(split, 'no seed ever moved the wound off the leader').toBeGreaterThan(0);
+  });
+
+  it('deals the same total, however many people it lands on', () => {
+    // Spreading damage must not quietly reduce it. The size is fixed by the
+    // seat the Threat was looking at when it moved — `menacePerSign` is "the
+    // wound deepens with the corruption that drew it".
+    for (let i = 0; i < 12; i++) {
+      const { s, a } = nearTied(`menace-total-${i}`);
+      const sl = s.street[0]!;
+      const expected = Math.ceil(
+        effectiveMenace(sl, s.tuning.omenMenace) * s.tuning.damagePerHit,
+      ) + Math.floor(signsHeld(s, a) * s.tuning.menacePerSign);
+
+      const r = apply(s, s.activePlayer, { t: 'END_TURN' });
+      const dealt = r.events
+        .filter((e) => e.t === 'MENACE')
+        .reduce((n, e) => n + (e as { amount: number }).amount, 0);
+      expect(dealt).toBe(expected);
+    }
+  });
+
+  it('says it once per person, not once per point', () => {
+    // The chronicle and the Dusk report both count these. One event per point
+    // would announce the same wound four times.
+    const { s } = nearTied('menace-events');
+    const r = apply(s, s.activePlayer, { t: 'END_TURN' });
+    const hits = r.events.filter((e) => e.t === 'MENACE');
+    const seats = new Set(hits.map((e) => (e as { player: string }).player));
+    expect(hits).toHaveLength(seats.size);
+    // And one wound per person, not one per card taken.
+    for (const seat of seats) {
+      const damaged = r.events.filter(
+        (e) => e.t === 'DAMAGED' && (e as { player: string }).player === seat,
+      );
+      expect(damaged.length).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
+/*
+  `blindDamage` — the switch behind the "Damage vs. Signs" ruling.
+
+  Off (the default) damage eats Provisions first and a wounded player is a MORE
+  corrupt player. On, it takes whatever it finds, so corruption is shot off you
+  in proportion to how much you are carrying. Measured both ways; see CLAUDE.md.
+*/
+/*
+  Recovering a card is a CHOICE, not the oldest thing in the pile.
+
+  It used to take the first non-Sign in the boneyard — insertion order, which is
+  deterministic and reads as a dice roll from the far side of the table. Same
+  ruling the `trash` op already carries: a rule you can see is a rule you can
+  play around, one you cannot is just a card appearing.
+*/
+/*
+  A card with nothing to point at is not offered.
+
+  Same rule the engine already applies to a card with no ops — a Six-Gun at an
+  empty Street spends an action to move a card from your hand to your discard —
+  except this one asks about the BOARD rather than about the card.
+*/
+describe('cards with no target in the Street', () => {
+  function withHand(cardId: string, street: (string | null)[] = []) {
+    const s = start(setup({ seed: `tgt-${cardId}`, players: ['Ada', 'Bo', 'Cy'] })).state;
+    const me = s.activePlayer;
+    s.street = [null, null, null];
+    street.forEach((id, i) => { if (id) s.street[i] = threat(s, id); });
+    s.players[me].hand = [newInstance(s, cardId)];
+    s.actionsLeft = 3;
+    const uid = s.players[me].hand[0].uid;
+    return {
+      s, me, uid,
+      offered: () => legalCommands(s, me).some((c) => c.t === 'PLAY_CARD' && c.uid === uid),
+    };
+  }
+
+  it('withholds an attack when the Street is empty', () => {
+    expect(withHand('six-gun').offered()).toBe(false);
+  });
+
+  it('offers it the moment there is something to shoot', () => {
+    expect(withHand('six-gun', ['claim-jumpers']).offered()).toBe(true);
+  });
+
+  it('withholds a ward with nothing to ward off', () => {
+    // Night Watch cancels one Threat's Menace. No Threat, no Menace.
+    expect(withHand('night-watch').offered()).toBe(false);
+  });
+
+  it('withholds Dynamite with neither Threat nor Omen', () => {
+    expect(withHand('dynamite').offered()).toBe(false);
+    // A Street with anything in it gives the blast something to do.
+    expect(withHand('dynamite', ['claim-jumpers']).offered()).toBe(true);
+  });
+
+  it('still offers an attack in Act II, because the Vessel is a target', () => {
+    /*
+      The endgame case, and the reason this asks about ops rather than about
+      the Street alone: most of Act II ends with nothing to shoot but the thing
+      you came for.
+    */
+    const { s, posse } = actII();
+    s.street = [null, null, null];
+    s.players[posse].hand = [newInstance(s, 'six-gun', true)];
+    s.activePlayer = posse;
+    s.actionsLeft = 3;
+    const uid = s.players[posse].hand[0].uid;
+    expect(legalCommands(s, posse).some((c) => c.t === 'PLAY_CARD' && c.uid === uid))
+      .toBe(true);
+  });
+
+  it('asks the question without spending any randomness', () => {
+    /*
+      `resolveSlots` advances `s.rngCursor` for `target: 'random'`, and
+      `legalCommands` runs on every render for every card for every seat. A
+      question that consumed randomness would put the cursor somewhere a replay
+      could not follow — invariant 1, and the one that cannot be bent.
+    */
+    const { s, me } = withHand('colt', ['claim-jumpers', 'rustlers']);
+    const before = s.rngCursor;
+    for (let i = 0; i < 5; i++) legalCommands(s, me);
+    expect(s.rngCursor).toBe(before);
+  });
+});
+
+/*
+  Rotating the start of the round, and the two questions it raises: what happens
+  once the Vessel is at the table, and what happens when most of the table is
+  gone.
+
+  The rotation is a poker button — `startSeat` moves one chair each Dawn and
+  `turnOrder` never changes, so everybody keeps their neighbours. What moves is
+  who acts first and who acts last.
+*/
+describe('rotateStart', () => {
+  /**
+   * Play whole rounds, recording who acted in each. COMPLETE rounds only.
+   *
+   * The driver just ends every turn, so nobody ever clears a Threat and the
+   * table is eventually wiped out — which leaves a half-played round at the
+   * end, and asserting on that measures where the run stopped rather than the
+   * rule. A round is only returned once the next one has begun.
+   */
+  function rounds(s0: GameState, n: number): PlayerId[][] {
+    let s = s0;
+    const done: PlayerId[][] = [];
+    let here: PlayerId[] = [];
+    for (let i = 0; i < 400 && done.length < n && !s.winner; i++) {
+      const actor = s.pending ? s.pending.player : s.activePlayer;
+      const legal = legalCommands(s, actor);
+      if (!legal.length) break;
+      if (!s.pending && !here.includes(actor)) here.push(actor);
+      const before = s.round;
+      s = apply(s, actor, legal.find((c) => c.t === 'END_TURN') ?? legal[0]!).state;
+      if (s.round !== before) { done.push(here); here = []; }
+    }
+    return done;
+  }
+
+  /**
+   * A table, optionally with some chairs already empty.
+   *
+   * Emptied BEFORE the deal. Marking a seat gone afterwards leaves it as the
+   * active player — the game has already begun on it — which looks like a gone
+   * seat taking a turn and is an artefact of the fixture, not of the rule.
+   */
+  function table(gone: number[] = [], tuning: Record<string, unknown> = {}) {
+    const opening = setup({
+      seed: 'rotate', players: ['Ada', 'Bo', 'Cy', 'Di'], markedIndex: null,
+      tuning: { rotateStart: true, ...tuning },
+    });
+    for (const i of gone) opening.players[opening.turnOrder[i]!]!.status = 'gone';
+    return start(opening).state;
+  }
+
+  it('moves one chair a round and keeps everybody in the same order', () => {
+    const seen = rounds(table(), 4);
+    expect(seen.length, 'not enough complete rounds to judge').toBeGreaterThanOrEqual(3);
+    const order = seen[0]!;
+    expect(order).toHaveLength(4);
+    for (let r = 1; r < seen.length; r++) {
+      // A rotation of the first round, not a reshuffle: same cycle, new start.
+      const want = [...order.slice(r), ...order.slice(0, r)];
+      expect(seen[r], `round ${r + 1}`).toEqual(want);
+    }
+  });
+
+  it('gives every living seat exactly one turn a round', () => {
+    for (const seen of [rounds(table(), 4), rounds(table([], { rotateStart: false }), 4)]) {
+      for (const round of seen) expect(new Set(round).size).toBe(round.length);
+    }
+  });
+
+  /*
+    The Vessel takes its place in the rotation like anybody else.
+
+    Worth stating because the seat is special in every other way: it is the only
+    one that cannot buy, cannot be Menaced and wins by a different condition.
+    Its POSITION is not special, and rotating means the advantage of acting
+    after the whole posse — summoning into a Street they can no longer answer —
+    stops belonging to whichever seat happened to be named at the Turning.
+  */
+  it('includes the Vessel, and still ends the round exactly once', () => {
+    const { s } = actII();
+    s.tuning = { ...s.tuning, rotateStart: true };
+    const seen = rounds(s, 3);
+    for (const round of seen) {
+      expect(round, 'the Vessel was skipped').toContain(s.vessel!);
+      expect(new Set(round).size).toBe(round.length);
+    }
+  });
+
+  /*
+    Nobody takes two turns across a Dusk.
+
+    Raised from the table: with the posse down to one player and the Vessel,
+    rotating by one means the seat that acted last acts first again — three
+    actions, the sun goes down, three more, and nothing in between. It is not
+    only a two-player case either: at three seats it happens the moment one of
+    them falls, so a rule counting living players would miss it.
+  */
+  function seatedTurnStream(s0: GameState, steps: number): PlayerId[] {
+    let s = s0;
+    const order: PlayerId[] = [];
+    for (let i = 0; i < steps && !s.winner; i++) {
+      const actor = s.pending ? s.pending.player : s.activePlayer;
+      const legal = legalCommands(s, actor);
+      if (!legal.length) break;
+      if (!s.pending && order[order.length - 1] !== actor) order.push(actor);
+      s = apply(s, actor, legal.find((c) => c.t === 'END_TURN') ?? legal[0]!).state;
+    }
+    return order;
+  }
+
+  it('never gives the same seat two turns in a row', () => {
+    for (const gone of [[], [0], [0, 1], [0, 2]]) {
+      const s = table(gone);
+      const stream = seatedTurnStream(s, 300);
+      expect(stream.length, `${4 - gone.length} seats`).toBeGreaterThan(4);
+      for (let i = 1; i < stream.length; i++) {
+        expect(stream[i], `${4 - gone.length} seats, turn ${i}`).not.toBe(stream[i - 1]);
+      }
+    }
+  });
+
+  it('stops rotating at two seats, rather than swapping who doubles', () => {
+    // With two players there is no rotation that does not double somebody, so
+    // the rule resolves to holding the order steady. That falls out of "the
+    // round may not begin with whoever ended the last one" — it is not a
+    // special case anybody has to remember.
+    const s = table([0, 1]);
+    const stream = seatedTurnStream(s, 200);
+    const pair = [s.turnOrder[2]!, s.turnOrder[3]!];
+    expect(stream.length).toBeGreaterThan(3);
+    for (let i = 1; i < stream.length; i++) {
+      expect(pair).toContain(stream[i]);
+      expect(stream[i]).not.toBe(stream[i - 1]);
+    }
+  });
+
+  it('rounds still turn over with most of the table gone', () => {
+    /*
+      `startSeat` walks over every chair, including empty ones. A round that
+      begins on a seat nobody is in must still reach Dusk — `advance` ends the
+      round when the turn comes back to whoever began it, and a gone seat hands
+      straight on rather than ending anything.
+    */
+    const s = table([0, 2]);
+    const living = s.turnOrder.filter((id) => s.players[id].status !== 'gone');
+    const seen = rounds(s, 3);
+    expect(seen.length, 'the rounds stopped turning over').toBeGreaterThanOrEqual(2);
+    for (const round of seen) {
+      expect(round.every((id) => living.includes(id)), 'a gone seat took a turn').toBe(true);
+      expect(round.length, 'a living seat was skipped').toBe(living.length);
+    }
+  });
+});
+
+/*
+  The Vessel burns a Sign for a Whisper.
+
+  What the kept Signs were always reaching for and never delivered: a Sign-heavy
+  Act I arming the Old One's Act II. Most Signs face the STREET — a Fevered Colt
+  in that hand destroys a Threat FOR the posse — and the seat cannot cash a card
+  in, so without an outlet they are dead paper on 37% of the deck.
+*/
+/*
+  Omens name a price.
+
+  Dynamite used to be the only answer in the game, and a table that had not
+  bought one had no play at all against an Omen — 39.3% of games ended with one
+  still standing. Each Omen now carries a Toll, in three different currencies,
+  so which one is cheap depends on how you have been playing.
+*/
+/*
+  A Bounty Provision is CHOSEN, not the leftmost card on the shelf.
+
+  Same ruling as `recover` and `trash` before it: a rule you can see is a rule
+  you can play around, one you cannot is just a card arriving.
+*/
+/*
+  A prompt that offers cards names them, so the client can draw the face.
+
+  The key cannot carry it: a scried Threat, a card in a boneyard and a Provision
+  on the shelf are all keyed by UID, because a pile can hold two of the same
+  card. Without `cardId` those three fell through to a column of buttons — the
+  one surface in the game that does not show the card, and the worst place for
+  it, since scrying is a card you paid a Sign to look at.
+*/
+describe('choice options name their card', () => {
+  it('scry does, and the ids are real', () => {
+    const s = start(base()).state;
+    const me = s.activePlayer;
+    pushOps(s, [{ op: 'scry', n: 3, target: 'self' }], me, 'test');
+    const ev: GameEvent[] = [];
+    runQueue(s, ev);
+    const opts = s.pending!.options;
+    expect(opts.length).toBeGreaterThan(1);
+    for (const o of opts) {
+      expect(o.cardId, o.label).toBeTruthy();
+      expect(() => card(o.cardId!)).not.toThrow();
+      expect(card(o.cardId!).name).toBe(o.label);
+      // Keyed by uid, not by id — the point of carrying both.
+      expect(o.key).not.toBe(o.cardId);
+    }
+  });
+
+  it('so do the other two prompts that offer cards from a pile', () => {
+    const s = start(base()).state;
+    const me = s.activePlayer;
+    s.players[me].boneyard = [newInstance(s, 'six-gun'), newInstance(s, 'winchester')];
+    for (const ops of [
+      [{ op: 'recover', target: 'self' }] as Op[],
+      [{ op: 'gainCard', filter: { from: 'provisionRow' }, target: 'self' }] as Op[],
+    ]) {
+      const cur = structuredClone(s);
+      pushOps(cur, ops, me, 'test');
+      const ev: GameEvent[] = [];
+      runQueue(cur, ev);
+      expect(cur.pending, JSON.stringify(ops)).not.toBeNull();
+      for (const o of cur.pending!.options) {
+        expect(o.cardId, `${ops[0]!.op}: ${o.label}`).toBeTruthy();
+        expect(card(o.cardId!).name).toBe(o.label);
+      }
+    }
+  });
+
+  it('a prompt for a PLAYER carries no card id', () => {
+    // The flag is what the client switches on, so it has to be absent when the
+    // options are people rather than cards.
+    const s = start(base()).state;
+    const me = s.activePlayer;
+    pushOps(s, [{ op: 'beckon', target: 'choose' }], me, 'test');
+    const ev: GameEvent[] = [];
+    runQueue(s, ev);
+    for (const o of s.pending!.options) expect(o.cardId).toBeUndefined();
+  });
+});
+
+describe('taking a Provision for a Bounty', () => {
+  const BOUNTY: Op[] = [{ op: 'gainCard', filter: { from: 'provisionRow' }, target: 'self' }];
+
+  function shelf() {
+    const s = start(base()).state;
+    const me = s.activePlayer;
+    s.supply.provisionRow = ['saddlebag', 'winchester', 'good-rope']
+      .map((id) => newInstance(s, id));
+    s.supply.provisions = [newInstance(s, 'six-gun')];
+    s.players[me].discard = [];
+    return { s, me };
+  }
+
+  it('offers the whole shelf', () => {
+    const { s, me } = shelf();
+    pushOps(s, BOUNTY, me, 'test');
+    const ev: GameEvent[] = [];
+    runQueue(s, ev);
+    expect(s.pending?.op).toBe('gainCard');
+    expect(s.pending!.options.map((o) => o.label).sort())
+      .toEqual(['Good Rope', 'Saddlebag', 'Winchester']);
+  });
+
+  it('takes the one picked, not the leftmost', () => {
+    const { s, me } = shelf();
+    pushOps(s, BOUNTY, me, 'test');
+    const ev: GameEvent[] = [];
+    runQueue(s, ev);
+    const want = s.pending!.options.find((o) => o.label === 'Winchester')!;
+    resolveChoice(s, [want.key], ev);
+    expect(s.players[me].discard.some((ci) => ci.cardId === 'winchester')).toBe(true);
+    expect(s.supply.provisionRow.some((ci) => ci.uid === want.key)).toBe(false);
+    // And the Saddlebag it would have taken before is still on the shelf.
+    expect(s.supply.provisionRow.some((ci) => ci.cardId === 'saddlebag')).toBe(true);
+  });
+
+  it('refills the shelf behind it, the way a purchase does', () => {
+    /*
+      It did not, which meant a Bounty quietly shrank the row for the rest of
+      the game. Four Act I Threats pay one, so a table that cleared well ended
+      up shopping from a shorter shelf than a table that did not.
+    */
+    const { s, me } = shelf();
+    const before = s.supply.provisionRow.length;
+    pushOps(s, BOUNTY, me, 'test');
+    const ev: GameEvent[] = [];
+    runQueue(s, ev);
+    resolveChoice(s, [s.pending!.options[0]!.key], ev);
+    expect(s.supply.provisionRow).toHaveLength(before);
+  });
+
+  it('does not stop to ask when the shelf is bare', () => {
+    const { s, me } = shelf();
+    s.supply.provisionRow = [];
+    pushOps(s, BOUNTY, me, 'test');
+    const ev: GameEvent[] = [];
+    runQueue(s, ev);
+    expect(s.pending).toBeNull();
+  });
+});
+
+describe('Omen Tolls', () => {
+  const OMENS = ['dead-cattle', 'the-well', 'preacher'] as const;
+
+  function withOmen(id: string) {
+    const s = start(base()).state;
+    const me = s.activePlayer;
+    s.street = [threat(s, id), null, null];
+    s.actionsLeft = 3;
+    return { s, me };
+  }
+
+  it('every Omen has one, and they are not all the same price', () => {
+    const prices = OMENS.map((id) => JSON.stringify(card(id).toll));
+    for (const p of prices) expect(p).not.toBe(undefined);
+    expect(new Set(prices).size, 'the three Omens ask for the same thing').toBe(3);
+  });
+
+  it('lifts the Omen when paid', () => {
+    const { s, me } = withOmen('dead-cattle');
+    s.players[me].gritThisTurn = 5;
+    const r = apply(s, me, { t: 'PAY_TOLL', slot: 0 });
+    expect(r.state.street[0]).toBeNull();
+    expect(r.state.players[me].gritThisTurn).toBe(5 - 3);
+  });
+
+  it('is not offered to somebody who cannot pay', () => {
+    /*
+      The whole point of `canPay`: a button that throws is worse than no button.
+      Grit is the case a new op had to be taught — a negative `grit` would have
+      been a price the checker could not see.
+    */
+    const { s, me } = withOmen('dead-cattle');
+    s.players[me].gritThisTurn = 2;
+    expect(legalCommands(s, me).some((c) => c.t === 'PAY_TOLL')).toBe(false);
+    s.players[me].gritThisTurn = 3;
+    expect(legalCommands(s, me).some((c) => c.t === 'PAY_TOLL')).toBe(true);
+  });
+
+  it('asks a Puritan for something they have', () => {
+    // The Sign toll is unpayable without a Sign, by design — but the other two
+    // are not, so no way of playing locks you out of every Omen in the game.
+    const { s, me } = withOmen('preacher');
+    s.players[me].hand = [];
+    s.players[me].gritThisTurn = 9;
+    expect(legalCommands(s, me).some((c) => c.t === 'PAY_TOLL')).toBe(false);
+
+    const scar = withOmen('the-well');
+    scar.s.players[scar.me].hand = [];
+    expect(legalCommands(scar.s, scar.me).some((c) => c.t === 'PAY_TOLL')).toBe(true);
+  });
+
+  it('charges the price, and the Scar is a real one', () => {
+    const { s, me } = withOmen('the-well');
+    const before = s.players[me].discard.length;
+    const r = apply(s, me, { t: 'PAY_TOLL', slot: 0 });
+    expect(r.state.street[0]).toBeNull();
+    expect(r.state.players[me].discard.length).toBe(before + 1);
+    expect(r.state.players[me].discard.some((ci) => ci.cardId === 'scar')).toBe(true);
+  });
+});
+
+describe('BURN_SIGN', () => {
+  function vesselHolding(cardIds: string[]) {
+    const { s, vessel } = actII();
+    s.players[vessel].hand = cardIds.map((id) => newInstance(s, id, true));
+    s.activePlayer = vessel;
+    s.actionsLeft = 3;
+    return { s, vessel };
+  }
+
+  it('turns a Sign into a Whisper and takes the card out of the game', () => {
+    const { s, vessel } = vesselHolding(['colt']);
+    const uid = s.players[vessel].hand[0]!.uid;
+    const before = s.whispers;
+    const r = apply(s, vessel, { t: 'BURN_SIGN', uid });
+    // Through `addWhispers`, so the Act II rate multiplies it like every other
+    // gain — one Sign is worth more after the Turning than it would have been
+    // before, which is the right direction for the thing it represents.
+    expect(r.state.whispers).toBe(
+      before + r.state.tuning.vesselSignWhispers * r.state.tuning.whisperRateMythos,
+    );
+    expect(r.state.players[vessel].hand).toHaveLength(0);
+    // Burned, not discarded. The Vessel's deck is rebuilt from what is left, so
+    // a discard would deal the same brick back round again.
+    expect(r.state.players[vessel].boneyard.some((ci) => ci.cardId === 'colt')).toBe(true);
+    expect(r.state.players[vessel].discard.some((ci) => ci.cardId === 'colt')).toBe(false);
+  });
+
+  it('is offered for Signs and never for the Old One\'s own cards', () => {
+    const { s, vessel } = vesselHolding(['colt', 'your-name']);
+    const sign = s.players[vessel].hand[0]!;
+    const mine = s.players[vessel].hand[1]!;
+    const legal = legalCommands(s, vessel);
+    expect(legal.some((c) => c.t === 'BURN_SIGN' && c.uid === sign.uid)).toBe(true);
+    expect(legal.some((c) => c.t === 'BURN_SIGN' && c.uid === mine.uid)).toBe(false);
+    // Whispers the seat prints for itself would not be Whispers the table
+    // handed over, so `apply` refuses it too.
+    expect(() => apply(s, vessel, { t: 'BURN_SIGN', uid: mine.uid })).toThrow();
+  });
+
+  it('belongs to the Vessel alone', () => {
+    const { s, posse } = actII();
+    s.players[posse].hand = [newInstance(s, 'colt', true)];
+    s.activePlayer = posse;
+    s.actionsLeft = 3;
+    const uid = s.players[posse].hand[0]!.uid;
+    expect(legalCommands(s, posse).some((c) => c.t === 'BURN_SIGN')).toBe(false);
+    expect(() => apply(s, posse, { t: 'BURN_SIGN', uid })).toThrow();
+  });
+
+  it('costs an action, like every other thing that seat does', () => {
+    const { s, vessel } = vesselHolding(['colt']);
+    s.actionsLeft = 1;
+    const uid = s.players[vessel].hand[0]!.uid;
+    const r = apply(s, vessel, { t: 'BURN_SIGN', uid });
+    expect(r.state.actionsLeft).toBe(0);
+  });
+
+  it('fills the bar, and the fill pays Doom like any other', () => {
+    // Whispers only ever go up, and in Act II a full bar is Doom. Burning is
+    // not a side channel around that.
+    const { s, vessel } = vesselHolding(['colt']);
+    s.whispers = s.tuning.whisperThreshold - 1;
+    const doom = s.doom;
+    const r = apply(s, vessel, { t: 'BURN_SIGN', uid: s.players[vessel].hand[0]!.uid });
+    expect(r.state.doom).toBeGreaterThan(doom);
+    expect(r.state.whispers).toBeLessThan(r.state.tuning.whisperThreshold);
+  });
+});
+
+describe('recover', () => {
+  function withBoneyard(seed: string) {
+    const s = start(setup({ seed, players: ['Ada', 'Bo', 'Cy'], markedIndex: null })).state;
+    const me = s.activePlayer;
+    // Oldest first, so "the first non-Sign" and "the best card" differ.
+    s.players[me].boneyard = [
+      newInstance(s, 'saddlebag'),
+      newInstance(s, 'winchester'),
+      newInstance(s, 'colt'),          // a Sign: never recoverable
+    ];
+    s.players[me].hand = [newInstance(s, 'docs-bag')];
+    s.actionsLeft = 3;
+    return { s, me };
+  }
+
+  it('asks which card, rather than taking the oldest', () => {
+    const { s, me } = withBoneyard('rec-1');
+    const r = apply(s, me, { t: 'PLAY_CARD', uid: s.players[me].hand[0].uid });
+    expect(r.state.pending?.op).toBe('recover');
+    // Both non-Signs offered, the Sign not.
+    const names = r.state.pending!.options.map((o) => o.label).sort();
+    expect(names).toEqual(['Saddlebag', 'Winchester']);
+  });
+
+  it('takes the one that was chosen', () => {
+    const { s, me } = withBoneyard('rec-2');
+    const played = apply(s, me, { t: 'PLAY_CARD', uid: s.players[me].hand[0].uid }).state;
+    const want = played.pending!.options.find((o) => o.label === 'Winchester')!;
+    const r = apply(played, me, {
+      t: 'RESOLVE_CHOICE', choiceId: played.pending!.id, picks: [want.key],
+    });
+    expect(r.state.players[me].discard.some((ci) => ci.cardId === 'winchester')).toBe(true);
+    // And it left the pile, rather than being copied out of it.
+    expect(r.state.players[me].boneyard.some((ci) => ci.uid === want.key)).toBe(false);
+  });
+
+  it('never hands a Sign back', () => {
+    // Signs only reach a boneyard once damage has eaten everything else, or a
+    // player has fallen. Recovering one would make this a way of topping up
+    // corruption rather than of patching a deck.
+    const { s, me } = withBoneyard('rec-3');
+    const sign = s.players[me].boneyard.find((ci) => ci.cardId === 'colt')!;
+    const played = apply(s, me, { t: 'PLAY_CARD', uid: s.players[me].hand[0].uid }).state;
+    expect(played.pending!.options.some((o) => o.key === sign.uid)).toBe(false);
+    /*
+      And asking for it anyway is refused at the gate.
+
+      `isLegal` is the authority on what was ever offered — `apply` checks a
+      command's own preconditions, and this is not one of those: it is a pick
+      that was never on the list. The op ignores it as a second line of
+      defence, which is why the state below is unchanged rather than corrupt.
+    */
+    const ask = {
+      t: 'RESOLVE_CHOICE' as const, choiceId: played.pending!.id, picks: [sign.uid],
+    };
+    expect(isLegal(played, me, ask)).toBe(false);
+    const forced = apply(played, me, ask).state;
+    expect(forced.players[me].discard.some((ci) => ci.cardId === 'colt')).toBe(false);
+  });
+
+  it('does not stop to ask when there is nothing to take', () => {
+    const { s, me } = withBoneyard('rec-4');
+    s.players[me].boneyard = [];
+    const r = apply(s, me, { t: 'PLAY_CARD', uid: s.players[me].hand[0].uid });
+    expect(r.state.pending).toBeNull();
+  });
+});
+
+describe('blind damage', () => {
+  /** A deck of Provisions and Signs in equal measure, plus a Last Words. */
+  function mixedDeck(seed: string, blind: boolean) {
+    const s = start(setup({
+      seed, players: ['Ada', 'Bo', 'Cy'], markedIndex: null,
+      tuning: { blindDamage: blind },
+    })).state;
+    const me = s.activePlayer;
+    s.players[me].hand = [];
+    s.players[me].discard = [];
+    s.players[me].deck = [
+      ...Array.from({ length: 6 }, () => newInstance(s, 'six-gun')),
+      ...Array.from({ length: 6 }, () => newInstance(s, 'colt')),
+      newInstance(s, 'last-words'),
+    ];
+    return { s, me };
+  }
+
+  it('ordered damage leaves every Sign standing while a Provision remains', () => {
+    const { s, me } = mixedDeck('ordered', false);
+    const ev: GameEvent[] = [];
+    damagePlayer(s, me, 6, ev);
+    // Counted as Colts, not as Signs: Last Words is itself a Sign, and it has
+    // its own rule below.
+    const colts = s.players[me].deck.filter((ci) => ci.cardId === 'colt');
+    expect(colts).toHaveLength(6);
+  });
+
+  it('blind damage reaches Signs with Provisions still in the deck', () => {
+    // Over seeds: one roll could take six Provisions by luck. The claim is that
+    // it CAN reach a Sign early, which the ordered rule never does.
+    let touched = 0;
+    for (let i = 0; i < 12; i++) {
+      const { s, me } = mixedDeck(`blind-${i}`, true);
+      const ev: GameEvent[] = [];
+      damagePlayer(s, me, 4, ev);
+      const colts = s.players[me].deck.filter((ci) => ci.cardId === 'colt');
+      const kit = s.players[me].deck.filter((ci) => card(ci.cardId).type !== 'sign');
+      if (colts.length < 6 && kit.length > 1) touched++;
+    }
+    expect(touched, 'blind damage never took a Sign early').toBeGreaterThan(0);
+  });
+
+  it('spares Last Words either way, while anything else is left', () => {
+    for (const blind of [false, true]) {
+      const { s, me } = mixedDeck(`lw-${blind}`, blind);
+      const ev: GameEvent[] = [];
+      damagePlayer(s, me, 11, ev);
+      expect(
+        s.players[me].deck.some((ci) => ci.cardId === 'last-words'),
+        `Last Words taken with blindDamage: ${blind}`,
+      ).toBe(true);
+    }
   });
 });
 

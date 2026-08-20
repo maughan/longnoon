@@ -18,7 +18,7 @@ import type {
 } from "../../engine/state";
 import type { ClientState } from "../../engine/view";
 import type { Speed } from "../../server/protocol";
-import { useNet, roomFor, type Net } from "./net";
+import { useNet, roomFor, joinPlan, passport, type Net } from "./net";
 import { GLOSSARY, Rules, Term, Tooltips } from "./glossary";
 import { describeOps, cardKeywords, thirdLine } from "./cardText";
 import { nameOf as whoIs, type Beat } from "./beats";
@@ -87,11 +87,35 @@ function useRoomUrl(net: Net, room: string): void {
 }
 
 export default function App() {
-  // The room has to be known before `useNet` opens the socket, so it is read
-  // from the URL first and the address bar is reconciled afterwards.
-  const [room] = useState(() => roomFor(location.search).room);
-  const net = useNet({ room, host: PARTY_HOST });
-  useRoomUrl(net, room);
+  /*
+    The room has to be known before `useNet` opens the socket, so it is read
+    from the URL first and the address bar is reconciled afterwards.
+
+    State rather than a constant, because typing a different code has to move
+    the SOCKET. The room is part of the address — one Durable Object per room —
+    so a `join` naming a room the socket is not open to is a message the server
+    cannot honour: it takes the room from the object the message reached. That
+    was the bug where a typed code was ignored and you landed in the room the
+    link named.
+  */
+  const [target, setTarget] = useState(() => roomFor(location.search));
+  const net = useNet({ room: target.room, host: PARTY_HOST });
+  useRoomUrl(net, target.room);
+
+  /**
+   * Sit down, in this room or in another one.
+   *
+   * Same room: send it. Different room: hold the join, point the socket at the
+   * new address, and let it go out when that connection opens.
+   */
+  const sit = useCallback((code: string, name: string) => {
+    const plan = joinPlan(target.room, code);
+    if (!plan) return;
+    if (!plan.move) { net.join(plan.room, name); return; }
+    net.queue({ t: "join", roomId: plan.room, name, player: passport() });
+    setTarget({ room: plan.room, fromUrl: true });
+  }, [net, target.room]);
+
   return (
     <Tooltips>
       {net.seat && net.view ? (
@@ -99,7 +123,15 @@ export default function App() {
       ) : net.seat && net.table ? (
         <Waiting net={net} />
       ) : (
-        <Lobby net={net} />
+        <Lobby
+          net={net}
+          // Prefilled only when the URL actually named a room. With no `?room=`
+          // the code is one this client just invented for a table that does not
+          // exist yet — offering it as something to join would be an invitation
+          // to a `No such room`.
+          prefill={target.fromUrl ? target.room : ""}
+          onSit={sit}
+        />
       )}
     </Tooltips>
   );
@@ -107,11 +139,40 @@ export default function App() {
 
 // ------------------------------------------------------------------ lobby
 
-function Lobby({ net }: { net: Net }) {
+function Lobby({
+  net, prefill, onSit,
+}: {
+  net: Net;
+  /** Room from the URL, if the link named one. */
+  prefill: string;
+  onSit: (code: string, name: string) => void;
+}) {
   const [name, setName] = useState("");
-  const [code, setCode] = useState("");
+  /*
+    What is in the box, and it is the box that decides.
+
+    This used to be `code || net.roomId`, so an empty field silently fell back
+    to whatever the server had last called the room — which meant the field
+    could show one room while the socket was open to another, and clearing it
+    did not clear anything. It holds one value now: what the link said, or what
+    you typed over it.
+  */
+  const [code, setCode] = useState(prefill);
   const [seats, setSeats] = useState(4);
-  const room = code || net.roomId || "";
+  const room = code.trim();
+
+  /*
+    Opening a table fills the box in for you.
+
+    The server names the room, and on the old Node hub that name is NOT the
+    address this socket used — so the code you need in order to sit down is
+    something only the reply knows. Adopted once, when it arrives; anything you
+    type after that stands, which is the part the old `code || net.roomId`
+    fallback got wrong.
+  */
+  useEffect(() => {
+    if (net.roomId) setCode(net.roomId);
+  }, [net.roomId]);
 
   return (
     <main className="lobby">
@@ -166,7 +227,7 @@ function Lobby({ net }: { net: Net }) {
         <button
           className="primary"
           disabled={!room || !name}
-          onClick={() => net.join(room, name)}
+          onClick={() => onSit(room, name)}
         >
           Sit down
         </button>
@@ -379,7 +440,7 @@ function Game({ net }: { net: Net }) {
           ? c.uid
           : c.t === "SPEND_GRIT"
             ? c.uids[0]
-            : c.t === "REVENANT_WHISPER"
+            : c.t === "REVENANT_WHISPER" || c.t === "BURN_SIGN"
               ? c.uid
               : null;
       if (uid) m.set(uid, [...(m.get(uid) ?? []), c]);
@@ -426,6 +487,7 @@ function Game({ net }: { net: Net }) {
         "SPEND_GRIT",
         "BUY",
         "REVENANT_WHISPER",
+        "BURN_SIGN",
         "RESOLVE_CHOICE",
       ].includes(c.t),
   );
@@ -525,22 +587,24 @@ function Game({ net }: { net: Net }) {
             */
             asCards(offscreen) ? (
               <div className="opts cards">
-                {offscreen.map((o) => (
-                  <PlayCard
-                    key={o.key}
-                    def={card(o.key)}
-                    fevered={v.act === "mythos"}
-                    actions={[]}
-                    onPlay={() => resolve(o.key)}
-                    onPick={() => resolve(o.key)}
-                    onZoom={() =>
-                      setZoom({
-                        def: card(o.key),
-                        fevered: v.act === "mythos",
-                      })
-                    }
-                  />
-                ))}
+                {offscreen.map((o) => {
+                  // Present, because `asCards` just said every option has one.
+                  const def = card(idOf(o)!);
+                  // `faceOf` only turns a SIGN, so a scried Threat or a
+                  // recovered Provision is unaffected by the blanket.
+                  const fevered = v.act === "mythos";
+                  return (
+                    <PlayCard
+                      key={o.key}
+                      def={def}
+                      fevered={fevered}
+                      actions={[]}
+                      onPlay={() => resolve(o.key)}
+                      onPick={() => resolve(o.key)}
+                      onZoom={() => setZoom({ def, fevered })}
+                    />
+                  );
+                })}
               </div>
             ) : (
               <div className="opts">
@@ -1856,9 +1920,12 @@ function Hand({
           <button
             key={i}
             className={c.t === "END_TURN" ? "" : "primary"}
+            // The full sentence on hover, because the label is trimmed to fit a
+            // row of buttons and a Toll is not a move you want half-read.
+            title={tollTitle(c, v)}
             onClick={() => onPlay(c)}
           >
-            {labelFor(c)}
+            {labelFor(c, v)}
           </button>
         ))}
         <div className="piles">
@@ -1902,6 +1969,26 @@ function Hand({
                   fevered={ci.fevered}
                   dim={!yours}
                   shut={shutFor(v, card(ci.cardId).type)}
+                  /*
+                    Why there is no Play button, when the card plainly does
+                    something and the door is open.
+
+                    NOT a second opinion about legality — that still comes only
+                    from `legal`, and this is drawn from its ABSENCE. What the
+                    client adds is the reason, and it reads only card data
+                    (`does this card have ops`) plus facts it was sent. The one
+                    rule it must not reimplement is `hasLiveTarget`, so it does
+                    not: it says "nothing to aim at" whenever a card with an
+                    effect is unplayable on your own turn for no visible reason,
+                    which is the only case left once shutters are excluded.
+                  */
+                  noTarget={
+                    yours
+                    && v.actionsLeft > 0
+                    && !shutFor(v, card(ci.cardId).type)
+                    && opsFor(card(ci.cardId), ci.fevered).length > 0
+                    && !(byUid.get(ci.uid) ?? []).some((c) => c.t === "PLAY_CARD")
+                  }
                   actions={(byUid.get(ci.uid) ?? []).map((cmd) => ({
                     cmd,
                     label: labelFor(cmd),
@@ -2278,6 +2365,7 @@ function PlayCard({
   onPlay,
   dim,
   shut = 0,
+  noTarget = false,
   market,
   width,
   drag,
@@ -2293,6 +2381,8 @@ function PlayCard({
   dim?: boolean;
   /** Rounds this card's type stays shut. 0 when it is playable. */
   shut?: number;
+  /** Playable in principle, with nothing in the Street to point it at. */
+  noTarget?: boolean;
   market?: boolean;
   width?: number;
   /** Present for a card in your hand: what it can do, and where it may go. */
@@ -2323,6 +2413,7 @@ function PlayCard({
         playable ? "playable" : "",
         dim ? "spent" : "",
         shut ? "shut" : "",
+        !shut && noTarget ? "shut untargeted" : "",
         canDrag ? "draggable" : "",
         onPick ? "pickable" : "",
       ]
@@ -2340,7 +2431,9 @@ function PlayCard({
       title={
         shut
           ? `Not That One — shut for ${shut} more round${shut === 1 ? "" : "s"}`
-          : undefined
+          : noTarget
+            ? "Nothing in the Street to point this at"
+            : undefined
       }
       role={onPick ? "button" : undefined}
       tabIndex={onPick ? 0 : undefined}
@@ -2369,6 +2462,11 @@ function PlayCard({
       {shut > 0 && (
         <span className="shutband">
           <Icon name="fevered" size={11} /> shut · {shut}
+        </span>
+      )}
+      {shut === 0 && noTarget && (
+        <span className="shutband quiet">
+          <Icon name="menace" size={11} /> nothing to aim at
         </span>
       )}
       {onZoom && (
@@ -2910,8 +3008,24 @@ function faceOf(
  */
 const CARD_IDS = new Set(ALL_CARDS.map((c) => c.id));
 
-function asCards(opts: { key: string }[]): boolean {
-  return opts.length > 0 && opts.every((o) => CARD_IDS.has(o.key));
+/**
+ * Does every option stand for a card?
+ *
+ * `cardId` first, then the key. The key alone was the whole test, and it only
+ * ever worked for prompts that offer cards BY ID — everything keyed by uid
+ * (scry, recover, a Provision off the shelf) fell through to a column of
+ * buttons, which is the one surface in the game that does not show the face.
+ * Scrying in particular: it is a card you paid a Sign to look at, and it was
+ * shown to you as its name in a box.
+ */
+function asCards(opts: { key: string; cardId?: string }[]): boolean {
+  return opts.length > 0 && opts.every((o) => idOf(o) !== undefined);
+}
+
+/** The card an option stands for, if it stands for one. */
+function idOf(o: { key: string; cardId?: string }): string | undefined {
+  if (o.cardId && CARD_IDS.has(o.cardId)) return o.cardId;
+  return CARD_IDS.has(o.key) ? o.key : undefined;
 }
 
 const FAMILY: Record<Card["type"], string> = {
@@ -2926,7 +3040,17 @@ const FAMILY: Record<Card["type"], string> = {
   revenant: "The Fallen",
 };
 
-function labelFor(c: Command): ReactNode {
+/** The hover line for a Toll: the price and what it lifts, spelled out. */
+function tollTitle(c: Command, v: ClientState): string | undefined {
+  if (c.t !== "PAY_TOLL") return undefined;
+  const sl = v.street[c.slot];
+  const def = sl && card(sl.instance.cardId);
+  if (!def?.toll?.length) return undefined;
+  return `${describeOps(def.toll)} to be rid of ${def.name}. `
+    + "An Omen cannot be shot, and will not leave on its own.";
+}
+
+function labelFor(c: Command, v?: ClientState): ReactNode {
   switch (c.t) {
     // case "PLAY_CARD":
     //   return "Play";
@@ -2940,10 +3064,33 @@ function labelFor(c: Command): ReactNode {
     }
     case "END_TURN":
       return "End turn";
-    case "PAY_TOLL":
-      return "Pay the price";
+    case "PAY_TOLL": {
+      /*
+        Which Omen, and what it costs.
+
+        "Pay the price" was the whole button, and with three Omens in the deck
+        asking three different prices — Grit, a Scar, one of your Signs — it
+        told the player neither what they were about to give up nor what it
+        would buy. Two of those are irreversible.
+
+        The price comes from `describeOps`, the same generator the card face
+        uses for its `Toll:` line, so the button and the card cannot disagree.
+      */
+      const sl = v?.street[c.slot];
+      const def = sl && card(sl.instance.cardId);
+      if (!def?.toll?.length) return "Pay the price";
+      return (
+        <>
+          {describeOps(def.toll)} <span className="muted">· {def.name}</span>
+        </>
+      );
+    }
     case "REVENANT_WHISPER":
       return "Whisper";
+    case "BURN_SIGN":
+      // What it costs and what it buys, in three words. "Whisper" alone would
+      // read as free, and this one takes the card away for good.
+      return "Burn for a Whisper";
     default:
       return c.t;
   }

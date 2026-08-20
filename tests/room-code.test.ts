@@ -8,7 +8,7 @@
 // keeping them equal.
 
 import { describe, it, expect } from 'vitest';
-import { roomFor } from '../client/src/net';
+import { roomFor, joinPlan } from '../client/src/net';
 
 describe('choosing a room', () => {
   it('uses the code in the URL when there is one', () => {
@@ -39,5 +39,35 @@ describe('choosing a room', () => {
 
   it('survives a URL carrying other params', () => {
     expect(roomFor('?debug=1&room=xyz&x=2').room).toBe('xyz');
+  });
+});
+
+/*
+  Sitting down in a room the socket is not open to.
+
+  The report: "even if a new room id was entered, a player pressing join would
+  join the original table from the url". The cause is that the room is part of
+  the ADDRESS — one Durable Object per room — so the server takes it from the
+  object the message reached and ignores the `roomId` field. A `join` sent down
+  the socket the link opened is a join to the link's room, whatever it says.
+*/
+describe('sitting down', () => {
+  it('sends straight away when it is the room you are already in', () => {
+    expect(joinPlan('abc', 'abc')).toEqual({ room: 'abc', move: false });
+  });
+
+  it('moves the socket first when the code is a different room', () => {
+    // `move` is the whole fix: false here would send the join down a socket
+    // open to `abc` and seat the player at `abc`, silently.
+    expect(joinPlan('abc', 'xyz')).toEqual({ room: 'xyz', move: true });
+  });
+
+  it('trims, so a pasted code with a space is not a different room', () => {
+    expect(joinPlan('abc', '  abc  ')).toEqual({ room: 'abc', move: false });
+  });
+
+  it('does nothing at all with an empty code', () => {
+    expect(joinPlan('abc', '')).toBeNull();
+    expect(joinPlan('abc', '   ')).toBeNull();
   });
 });

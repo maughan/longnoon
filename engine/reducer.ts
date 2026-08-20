@@ -6,7 +6,7 @@ import { shuffle } from './rng';
 import {
   opsFor, pushOps, runQueue, resolveChoice, drawCards,
   livingPlayers, addWhispers, assertWhisperInvariants, newInstance, signsHeld,
-  canPay, clearThreat, enterStreet, resolveMenace, escalate,
+  canPay, clearThreat, enterStreet, resolveMenace, escalate, effectiveClear,
 } from './effects';
 
 /**
@@ -120,14 +120,22 @@ function applyInner(
     }
 
     case 'BUY': {
-      requireAction(s);
+      // Grit is the limit, unless the tuning says actions are too.
+      if (s.tuning.buyCostsAction) requireAction(s);
       const def = card(c.cardId);
       if (def.cost === undefined) throw new IllegalCommand('Not purchasable');
       if (p.gritThisTurn < def.cost) throw new IllegalCommand('Not enough Grit');
       if (p.status !== 'posse') throw new IllegalCommand('Only the posse may buy');
 
+      // Where a purchase lands. To hand it is usable this turn; to the discard
+      // it is a promise about a future shuffle.
+      const into = s.tuning.buyToHand ? p.hand : p.discard;
+      // Bought into a hand it is stamped, so it cannot be sold back the same
+      // turn. See `CardInstance.boughtRound` for the loop that stops.
+      const stamp = (ci: CardInstance): CardInstance =>
+        (s.tuning.buyToHand ? Object.assign(ci, { boughtRound: s.round }) : ci);
       if (def.type === 'sign') {
-        p.discard.push(newInstance(s, def.id, s.act === 'mythos'));
+        into.push(stamp(newInstance(s, def.id, s.act === 'mythos')));
         // Act II: Provisions have run dry by design, so Signs are the only
         // thing left to buy — and a Sign bought after the Turning arms the
         // thing across the table. Before it, Whispers are still charged on
@@ -139,12 +147,12 @@ function applyInner(
       } else {
         const idx = s.supply.provisionRow.findIndex((ci) => ci.cardId === def.id);
         if (idx === -1) throw new IllegalCommand('Not in the Provision row');
-        p.discard.push(...s.supply.provisionRow.splice(idx, 1));
+        into.push(...s.supply.provisionRow.splice(idx, 1).map(stamp));
         const next = s.supply.provisions.shift();
         if (next) s.supply.provisionRow.push(next);
       }
       p.gritThisTurn -= def.cost;
-      s.actionsLeft--;
+      if (s.tuning.buyCostsAction) s.actionsLeft--;
       // A Beckoned player is paid for taking the bait.
       if (def.type === 'sign' && s.beckoned === playerId) {
         p.gritThisTurn += s.tuning.beckonGrit;
@@ -200,6 +208,35 @@ function applyInner(
       break;
     }
 
+    /**
+     * The Vessel burns a Sign for a Whisper.
+     *
+     * What the kept Signs were always reaching for and never delivered: a
+     * Sign-heavy Act I arming the Old One's Act II. Most of them face the
+     * STREET — a Fevered Colt in this hand destroys a Threat for the posse —
+     * and the seat cannot cash a card in, so without this they are dead paper
+     * on 37% of the deck.
+     *
+     * Signs only. The Old One's own cards are not corruption to burn, and
+     * letting the seat feed the track with them would make Whispers a resource
+     * it prints rather than one the table handed over.
+     */
+    case 'BURN_SIGN': {
+      if (p.status !== 'vessel') throw new IllegalCommand('Not the Vessel');
+      requireAction(s);
+      const idx = p.hand.findIndex((ci) => ci.uid === c.uid);
+      if (idx === -1) throw new IllegalCommand('Card not in hand');
+      const inst = p.hand[idx]!;
+      if (card(inst.cardId).type !== 'sign') throw new IllegalCommand('Not a Sign');
+      s.actionsLeft--;
+      // To the boneyard, not the discard: it is burned, and the Vessel's deck
+      // is rebuilt from what is left, so a discard would deal it back round.
+      p.boneyard.push(...p.hand.splice(idx, 1));
+      ev.push({ t: 'DISCARDED', player: playerId, n: 1, hand: false });
+      addWhispers(s, s.tuning.vesselSignWhispers, ev);
+      break;
+    }
+
     case 'END_TURN':
       endTurn(s, ev);
       break;
@@ -243,7 +280,8 @@ export function beginRound(s: GameState, ev: GameEvent[]): void {
   }
 
   s.phase = 'day';
-  s.activePlayer = s.turnOrder[0];
+  // Whoever is first this round. Fixed at seat 0 unless the table rotates.
+  s.activePlayer = s.turnOrder[s.startSeat] ?? s.turnOrder[0];
   startTurn(s, ev);
 }
 
@@ -298,12 +336,36 @@ function drawThreat(s: GameState): CardInstance | null {
 
 function startTurn(s: GameState, ev: GameEvent[]): void {
   const p = s.players[s.activePlayer];
-  // Act I Bounties can bank Grit for a player's next turn.
-  p.gritThisTurn = s.nextTurnGrit[p.id] ?? 0;
+  // Act I Bounties can bank Grit for a player's next turn. Added to whatever
+  // survived the end of the last one, rather than replacing it — a banked
+  // Bounty and carried change are the same coins.
+  p.gritThisTurn = (s.tuning.gritCarries ? p.gritThisTurn : 0)
+    + (s.nextTurnGrit[p.id] ?? 0);
   delete s.nextTurnGrit[p.id];
   if (p.status === 'gone') { advance(s, ev); return; }
   s.actionsLeft =
     p.status === 'revenant' ? s.tuning.revenantActions : s.tuning.actionsPerTurn;
+  /*
+    Nothing on the board to act against — deal one.
+
+    Through `drawThreat` + `enterStreet` like Dawn and SOMETHING COMES UP THE
+    STREET, so a Threat arriving this way is an ordinary arrival: same deck,
+    same recycling, same events, same overflow rule. A second way of putting a
+    card in the Street would be a second set of rules to keep in step.
+
+    Before the draw, so the hand is dealt into a board that already has the
+    Threat on it — a card whose only op needs a target is otherwise unplayable
+    on the turn it arrives.
+  */
+  const bare = s.tuning.refillNoClearable
+    // Nothing anybody could shoot off the board — an Omen-only Street is a full
+    // board with nothing to do on it, and reads worse than an empty one.
+    ? !s.street.some((sl) => sl && effectiveClear(sl) !== undefined)
+    : s.tuning.refillEmptyStreet && s.street.every((sl) => sl === null);
+  if (bare) {
+    const entering = drawThreat(s);
+    if (entering) enterStreet(s, entering, ev);
+  }
   drawCards(s, p.id, s.tuning.handSize - p.hand.length, ev);
   // A Revenant can burn out on the very draw that starts their turn. Do not
   // leave the turn resting on someone who no longer exists. (Read through the
@@ -338,8 +400,62 @@ function endTurn(s: GameState, ev: GameEvent[]): void {
   }
   p.discard.push(...swept);
   p.hand = [];
-  p.gritThisTurn = 0;
+  if (!s.tuning.gritCarries) p.gritThisTurn = 0;
+  /*
+    Draw now, so the hand is on the table while everybody else plays.
+
+    `startTurn` still tops up to `handSize`, which is a no-op once this has run
+    — that is deliberate rather than redundant. It is what deals the opening
+    hand, and what refills a hand that damage emptied between turns.
+
+    Before `advance`, so a Revenant who burns out on this draw is already `gone`
+    when the turn moves on and is skipped like any other empty chair.
+  */
+  if (s.tuning.drawAtEndOfTurn && p.status !== 'gone') {
+    drawCards(s, p.id, s.tuning.handSize - p.hand.length, ev);
+  }
   advance(s, ev);
+}
+
+/**
+ * Move the button one chair, and never onto the player who just closed the
+ * round.
+ *
+ * The trap, and it is not hypothetical: rotating by one means the seat that
+ * acted LAST becomes the seat that acts FIRST as soon as only two are still
+ * taking turns — 1 posse and the Vessel is the ordinary end state of Act II —
+ * so that player takes three actions, the sun goes down, and they take three
+ * more before anybody can answer. It also happens at three seats the moment one
+ * of them falls, so a rule counting living players would not catch it.
+ *
+ * Stated as the thing that is actually wrong instead: the round may not begin
+ * with whoever ended the last one. At two players that resolves to "do not
+ * rotate", which is correct — with two seats there is no rotation that does not
+ * double somebody — and it falls out rather than being special-cased.
+ */
+function rotateStart(s: GameState): void {
+  const n = s.turnOrder.length;
+  const acting = (i: number) => s.players[s.turnOrder[i % n]!]!.status !== 'gone';
+  const firstFrom = (from: number) => {
+    for (let k = 0; k < n; k++) if (acting(from + k)) return (from + k) % n;
+    return from % n;
+  };
+  const living = s.turnOrder.filter((id) => s.players[id].status !== 'gone');
+  s.startSeat = (s.startSeat + 1) % n;
+  if (living.length < 2) return;
+  /*
+    Resolve to a seat that is actually playing, THEN check it — and step past
+    the RESOLVED seat, not past the raw index.
+
+    Stepping from the raw index was wrong in the exact case this rule exists
+    for: with two living seats either side of a gone one, `startSeat + 1` can
+    resolve forward onto the very player it was trying to skip, and they take
+    the last turn of one round and the first of the next anyway. The simulator
+    trace read `p3@r2 p3@r3`.
+  */
+  let seat = firstFrom(s.startSeat);
+  if (s.turnOrder[seat] === s.lastRoundActor) seat = firstFrom(seat + 1);
+  s.startSeat = seat;
 }
 
 function advance(s: GameState, ev: GameEvent[]): void {
@@ -365,13 +481,31 @@ function advance(s: GameState, ev: GameEvent[]): void {
     }
     return;
   }
+  /*
+    The round ends when the turn comes back round to whoever began it.
+
+    Written against `startSeat` rather than against the end of the array, so
+    rotation needs no second rule — with `startSeat` at 0 this is exactly the
+    old "the last seat in the list ends the round".
+  */
+  const n = s.turnOrder.length;
   const i = s.turnOrder.indexOf(s.activePlayer);
-  if (i === s.turnOrder.length - 1) { dusk(s, ev); return; }
-  s.activePlayer = s.turnOrder[i + 1];
+  const next = (i + 1) % n;
+  if (next === (s.startSeat % n)) { dusk(s, ev); return; }
+  s.activePlayer = s.turnOrder[next];
   startTurn(s, ev);
 }
 
 function dusk(s: GameState, ev: GameEvent[]): void {
+  /*
+    The button passes when the round ENDS, not when the next one begins.
+
+    In `beginRound` it also fired for the opening deal — `start` runs one — so
+    the very first round of the game began on the second chair. The person who
+    sat down first should go first; rotation is what happens afterwards.
+  */
+  s.lastRoundActor = s.activePlayer;
+  if (s.tuning.rotateStart) rotateStart(s);
   s.phase = 'dusk';
   ev.push({ t: 'PHASE', phase: 'dusk', round: s.round });
 
@@ -446,14 +580,28 @@ export function checkTurning(
   {
     const v = s.players[vessel];
     const all = [...v.deck, ...v.hand, ...v.discard];
-    const kept = all
-      .filter((ci) => card(ci.cardId).type === 'sign')
-      .map((ci) => ({ ...ci, fevered: true }));
+    const signs = all.filter((ci) => card(ci.cardId).type === 'sign');
     v.boneyard.push(...all.filter((ci) => card(ci.cardId).type !== 'sign'));
     const fixed: CardInstance[] = [];
     for (const [id, n] of Object.entries(s.tuning.vesselDeck)) {
       for (let i = 0; i < n; i++) fixed.push(newInstance(s, id));
     }
+    /*
+      Your Signs, or the same number of the Old One's own cards.
+
+      Kept, they are mostly bricks: a Fevered Colt in this hand destroys a
+      Threat FOR the posse, and the Vessel cannot cash a card in either. Traded,
+      the arithmetic is unchanged — a corrupt Act I still makes a fatter deck —
+      but every card in it does something to the table rather than for it.
+
+      Dealt round-robin off `vesselDeck` rather than at random, so a big trade
+      spreads across the five rather than piling into one.
+    */
+    const ids = Object.keys(s.tuning.vesselDeck);
+    const kept = s.tuning.vesselKeepsSigns
+      ? signs.map((ci) => ({ ...ci, fevered: true }))
+      : signs.map((_, i) => newInstance(s, ids[i % ids.length]!));
+    if (!s.tuning.vesselKeepsSigns) v.boneyard.push(...signs);
     const r = shuffle([...fixed, ...kept], s.seed, s.rngCursor);
     s.rngCursor = r.cursor;
     v.deck = r.items;
